@@ -53,11 +53,6 @@ import {
 import { motion } from "motion/react";
 import { setAccentColor, useAccentColor } from "../settings/accent";
 import { cn } from "@/lib/utils";
-import {
-  setThemePreference,
-  useThemePreference,
-  type ThemePreference,
-} from "../settings/theme";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -550,22 +545,6 @@ const SETTINGS_TABS: Array<{
   { id: "shortcuts", label: "Shortcuts", description: "Keyboard bindings", icon: KeyIcon },
 ];
 
-const THEME_OPTIONS: Array<{
-  value: ThemePreference;
-  label: string;
-  hint: string;
-  swatch: string;
-}> = [
-  { value: "light", label: "Light", hint: "Always light", swatch: "bg-white" },
-  { value: "dark", label: "Dark", hint: "Always dark", swatch: "bg-neutral-900" },
-  {
-    value: "system",
-    label: "System",
-    hint: "Match the OS",
-    swatch: "bg-linear-to-br from-white to-neutral-900",
-  },
-];
-
 interface SettingsPageProps {
   libraryController: LibraryController;
   libraryState: LibraryState;
@@ -609,7 +588,6 @@ export function SettingsPage({
   const [lastFmBusy, setLastFmBusy] = useState(false);
   const [lastFmError, setLastFmError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<SettingsTab>("about");
-  const themePreference = useThemePreference();
   const accentColor = useAccentColor();
   const [listeningShortcut, setListeningShortcut] = useState<KeyboardShortcutAction | null>(null);
   const keyboardShortcuts = useKeyboardShortcuts();
@@ -2104,58 +2082,6 @@ export function SettingsPage({
               <input type="color" value={accentColor} onChange={(event) => setAccentColor(event.target.value)} aria-label="Accent colour" className="size-10 cursor-pointer rounded-lg bg-transparent" />
               <span>{accentColor.toUpperCase()}</span>
             </label>
-          </section>
-          <section className={SETTINGS_CARD} aria-labelledby="theme-settings-title">
-            <SettingsCardHeader
-              title="Theme"
-              titleId="theme-settings-title"
-              icon={<PaletteIcon size={18} aria-hidden="true" />}
-              description="Applies instantly across both windows."
-            />
-
-            <div
-              className="grid grid-cols-3 gap-2"
-              role="radiogroup"
-              aria-labelledby="theme-settings-title"
-            >
-              {THEME_OPTIONS.map((option) => {
-                const isActive = themePreference === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    role="radio"
-                    aria-checked={isActive}
-                    onClick={() => setThemePreference(option.value)}
-                    className={cn(
-                      "flex flex-col items-center gap-2 rounded-xl p-3 transition-colors",
-                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                      isActive ? "bg-primary/15" : "bg-background/40 hover:bg-card",
-                    )}
-                  >
-                    {/* Miniature window preview rather than a colour dot — it shows what
-                        the choice actually does. */}
-                    <span
-                      className={cn(
-                        "flex h-12 w-full flex-col justify-end overflow-hidden rounded-lg p-1 ring-1",
-                        option.swatch,
-                        isActive ? "ring-primary" : "ring-black/10",
-                      )}
-                      aria-hidden="true"
-                    >
-                      <span
-                        className={cn(
-                          "h-2 w-full rounded-sm",
-                          option.value === "light" ? "bg-neutral-300" : "bg-neutral-700",
-                        )}
-                      />
-                    </span>
-                    <span className="text-sm font-medium text-foreground">{option.label}</span>
-                    <span className="text-xs text-muted-foreground">{option.hint}</span>
-                  </button>
-                );
-              })}
-            </div>
           </section>
 
           <section className={SETTINGS_CARD} aria-labelledby="toolbar-settings-title">

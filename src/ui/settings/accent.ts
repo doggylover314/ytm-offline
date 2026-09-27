@@ -3,7 +3,7 @@ import { getAppSetting, setAppSetting } from "../../internal/appSettings";
 
 const KEY = "accent-color";
 const EVENT = "accent-color-change";
-const DEFAULT = "#d94d56";
+const DEFAULT = "#ff0033";
 const valid = (value: unknown): value is string => typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
 
 export function getAccentColor(): string {

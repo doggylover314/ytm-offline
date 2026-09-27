@@ -1,135 +1,367 @@
 /**
  * Central icon module — every icon in the app is imported from here.
  *
- * Convention (see docs/solarIcons.md):
- *   - Default export  = Solar **Linear** (stroked, strokeWidth 1.5) for resting/secondary state.
- *   - `*ActiveIcon`   = Solar **Bold** (filled) for active/primary state — playing, liked,
- *                       saved, selected. The weight change is the state signal.
+ * The rule, from the approved design: an icon that is off is a white outline, one that is on
+ * is filled. Shapes that can be filled (home, heart, microphone, gear) fill in; line glyphs
+ * that cannot (shuffle, repeat, queue, download) turn into a filled square with the glyph cut
+ * out of it. Actions with no on state (play, next, search) are drawn one way only.
  *
- * Single-icon import paths are used deliberately: importing the style barrel
- * (`@solar-icons/react/linear`) makes the dev server resolve ~1.2k modules per style.
- *
- * Routing every icon through one file means a renamed or missing Solar icon breaks
- * this module alone, not the 27 component files that consume it.
+ * The app's own glyphs are drawn here. The rest come from Lucide at the same stroke width so
+ * they sit in the same family. `*ActiveIcon` exports are the on state.
  */
 
-import type { SVGProps } from "react";
+import { useId, type ComponentType, type ReactNode, type SVGProps } from "react";
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowUpDown,
+  Bookmark,
+  Bug,
+  Clock,
+  Coffee,
+  Compass,
+  Copy,
+  Disc3,
+  Eye,
+  EyeOff,
+  FileText,
+  FolderOpen,
+  FolderPlus,
+  Gauge,
+  Globe,
+  HeartCrack,
+  Image,
+  Key,
+  Link,
+  List,
+  ListMusic,
+  ListPlus,
+  LogIn,
+  LogOut,
+  Music,
+  Palette,
+  Pencil,
+  Radio,
+  Save,
+  Star,
+  ThumbsDown,
+  Trash2,
+  User,
+  UserPlus,
+  WandSparkles,
+  type LucideProps,
+} from "lucide-react";
 
-/* ── Transport ─────────────────────────────────────────────────────── */
-export { PlayIcon } from "@solar-icons/react/linear/play";
-export { PlayIcon as PlayActiveIcon } from "@solar-icons/react/bold/play";
-export { PauseIcon } from "@solar-icons/react/linear/pause";
-export { PauseIcon as PauseActiveIcon } from "@solar-icons/react/bold/pause";
-export { SkipNextIcon } from "@solar-icons/react/linear/skip-next";
-export { SkipNextIcon as SkipNextActiveIcon } from "@solar-icons/react/bold/skip-next";
-export { SkipPreviousIcon } from "@solar-icons/react/linear/skip-previous";
-export { SkipPreviousIcon as SkipPreviousActiveIcon } from "@solar-icons/react/bold/skip-previous";
+type IconProps = Omit<SVGProps<SVGSVGElement>, "ref"> & { size?: number | string };
+type IconComponent = (props: IconProps) => ReactNode;
 
-/* ── Playback order ────────────────────────────────────────────────── */
-export { ShuffleIcon } from "@solar-icons/react/linear/shuffle";
-export { ShuffleIcon as ShuffleActiveIcon } from "@solar-icons/react/bold/shuffle";
-export { RepeatIcon } from "@solar-icons/react/linear/repeat";
-export { RepeatIcon as RepeatActiveIcon } from "@solar-icons/react/bold/repeat";
-export { RepeatOneIcon } from "@solar-icons/react/linear/repeat-one";
-export { RepeatOneIcon as RepeatOneActiveIcon } from "@solar-icons/react/bold/repeat-one";
+const STROKE = 1.75;
+
+function Svg({ size = 24, strokeWidth = STROKE, children, ...props }: IconProps & { children: ReactNode }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      {children}
+    </svg>
+  );
+}
+
+/**
+ * The on state of a line glyph: a filled square with the glyph cut out.
+ *
+ * A mask rather than a second colour, so the cut-out shows whatever surface the button sits
+ * on instead of guessing its colour.
+ */
+function Tile({ size = 24, children, strokeWidth: _ignored, ...props }: IconProps & { children: ReactNode }) {
+  const id = useId();
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width={size} height={size} aria-hidden="true" {...props}>
+      <defs>
+        <mask id={id}>
+          <rect width="24" height="24" fill="white" />
+          <g
+            transform="translate(12 12) scale(0.72) translate(-12 -12)"
+            fill="none"
+            stroke="black"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            color="black"
+          >
+            {children}
+          </g>
+        </mask>
+      </defs>
+      <rect x="2" y="2" width="20" height="20" rx="3" fill="currentColor" mask={`url(#${id})`} />
+    </svg>
+  );
+}
+
+const line = (d: string): IconComponent => (props) => <Svg {...props}><path d={d} /></Svg>;
+const filled = (d: string): IconComponent => (props) => <Svg {...props}><path d={d} fill="currentColor" /></Svg>;
+const tile = (d: string): IconComponent => (props) => <Tile {...props}><path d={d} /></Tile>;
+
+function lucide(Icon: ComponentType<LucideProps>, extra?: LucideProps): IconComponent {
+  return ({ size = 24, strokeWidth = STROKE, ...props }) => (
+    <Icon size={size} strokeWidth={strokeWidth} aria-hidden="true" {...extra} {...(props as LucideProps)} />
+  );
+}
+
+function lucideTile(Icon: ComponentType<LucideProps>): IconComponent {
+  return (props) => (
+    <Tile {...props}>
+      <Icon x={0} y={0} width={24} height={24} color="black" strokeWidth={2.4} />
+    </Tile>
+  );
+}
+
+/* ── Glyphs from the approved design ───────────────────────────────── */
+const HOME = "M4 10.2 12 4l8 6.2V20h-5v-5.5H9V20H4z";
+const LIBRARY = "M4.5 4.5H8v15H4.5zM10.25 4.5h3.5v15h-3.5zM15.6 5.4l3.2-.9 3.4 14.6-3.2.9z";
+const DOWNLOADS = "M12 4.5V14M8.25 10.5 12 14.25l3.75-3.75M4.5 15.5v3a1 1 0 0 0 1 1h13a1 1 0 0 0 1-1v-3";
+const DOWNLOAD_ARROW = "M12 7.5v8M8.75 12.5 12 15.75l3.25-3.25";
+const GEAR =
+  "M18.95 10.14 21.51 10.66 21.51 13.34 18.95 13.86 18.24 15.6 19.67 17.78 17.78 19.67 15.6 18.24 13.86 18.95 13.34 21.51 10.66 21.51 10.14 18.95 8.4 18.24 6.22 19.67 4.33 17.78 5.76 15.6 5.05 13.86 2.49 13.34 2.49 10.66 5.05 10.14 5.76 8.4 4.33 6.22 6.22 4.33 8.4 5.76 10.14 5.05 10.66 2.49 13.34 2.49 13.86 5.05 15.6 5.76 17.78 4.33 19.67 6.22 18.24 8.4Z";
+const GEAR_HOLE = "M15 12a3 3 0 1 0-6 0 3 3 0 1 0 6 0z";
+const SHUFFLE =
+  "M4 7h3.2c1.6 0 3 .8 3.9 2.1l3.8 5.8c.9 1.3 2.3 2.1 3.9 2.1H20M4 17h3.2c1.6 0 3-.8 3.9-2.1M14.9 9.1C15.8 7.8 17.2 7 18.8 7H20M17.5 4.5 20 7l-2.5 2.5M17.5 14.5 20 17l-2.5 2.5";
+const REPEAT = "M5 11V9a2 2 0 0 1 2-2h12M16.5 4.5 19 7l-2.5 2.5M19 13v2a2 2 0 0 1-2 2H5M7.5 19.5 5 17l2.5-2.5";
+const REPEAT_ONE = `${REPEAT}M11.2 10.6l1.1-.6v4`;
+const HEART = "M12 19.5s-7.5-4.4-7.5-9.6A4.1 4.1 0 0 1 12 7.6a4.1 4.1 0 0 1 7.5 2.3c0 5.2-7.5 9.6-7.5 9.6z";
+const MIC_STAND = "M6 11a6 6 0 0 0 12 0M12 17v3.5M9 20.5h6";
+const QUEUE = "M4 6.5h16M4 11.5h16M4 16.5h8.5M15.5 14v6l4.5-3z";
+const SEARCH = "M10.5 4.5a6 6 0 1 0 0 12 6 6 0 1 0 0-12zM15 15l5 5";
+const PLAY = "M8 5.5v13l10.5-6.5z";
+const SPEAKER = "M4 9.5h3.5L12 5.5v13l-4.5-4H4z";
+const VOLUME_LOUD = `${SPEAKER}M15.5 9a4.5 4.5 0 0 1 0 6M18 6.5a8 8 0 0 1 0 11`;
+const VOLUME_SMALL = `${SPEAKER}M15.5 9a4.5 4.5 0 0 1 0 6`;
+const VOLUME_MUTED = `${SPEAKER}M15.5 9.5l5 5M20.5 9.5l-5 5`;
+const CLOSE = "M6 6l12 12M18 6 6 18";
+const CHECK = "m5 12.5 4.5 4.5L19 7.5";
+const PLUS = "M12 5v14M5 12h14";
+const SYNC = "M19.5 12a7.5 7.5 0 0 1-13 5.1M4.5 12a7.5 7.5 0 0 1 13-5.1M17.5 3.5v3.4h-3.4M6.5 20.5v-3.4h3.4";
+const FOLDER = "M3.5 6.5a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z";
+const EXPAND = "M14 4.5h5.5V10M10 19.5H4.5V14M19.5 4.5l-6 6M4.5 19.5l6-6";
+const COLLAPSE = "M19.5 10H14V4.5M4.5 14H10v5.5M14 10l5.5-5.5M10 14l-5.5 5.5";
+const BACK = "M15 5 8 12l7 7";
+const FORWARD = "m9 5 7 7-7 7";
+const CHEVRON_DOWN = "m6 9 6 6 6-6";
+
+/* ── Transport (actions: one state) ────────────────────────────────── */
+export const PlayIcon = filled(PLAY);
+export const PlayActiveIcon = PlayIcon;
+export const PauseIcon: IconComponent = (props) => (
+  <Svg {...props} stroke="none">
+    <rect x="6.5" y="5.5" width="3.75" height="13" rx="1" fill="currentColor" />
+    <rect x="13.75" y="5.5" width="3.75" height="13" rx="1" fill="currentColor" />
+  </Svg>
+);
+export const PauseActiveIcon = PauseIcon;
+export const SkipPreviousIcon: IconComponent = (props) => (
+  <Svg {...props} stroke="none">
+    <path d="M18 6v12L9.5 12z" fill="currentColor" />
+    <rect x="6" y="6" width="2" height="12" rx="0.5" fill="currentColor" />
+  </Svg>
+);
+export const SkipPreviousActiveIcon = SkipPreviousIcon;
+export const SkipNextIcon: IconComponent = (props) => (
+  <Svg {...props} stroke="none">
+    <path d="M6 6v12l8.5-6z" fill="currentColor" />
+    <rect x="16" y="6" width="2" height="12" rx="0.5" fill="currentColor" />
+  </Svg>
+);
+export const SkipNextActiveIcon = SkipNextIcon;
+
+/* ── Playback order (toggles) ──────────────────────────────────────── */
+export const ShuffleIcon = line(SHUFFLE);
+export const ShuffleActiveIcon = tile(SHUFFLE);
+export const RepeatIcon = line(REPEAT);
+export const RepeatActiveIcon = tile(REPEAT);
+export const RepeatOneIcon = line(REPEAT_ONE);
+export const RepeatOneActiveIcon = tile(REPEAT_ONE);
 
 /* ── Volume ────────────────────────────────────────────────────────── */
-export { VolumeLoudIcon } from "@solar-icons/react/linear/volume-loud";
-export { VolumeLoudIcon as VolumeLoudActiveIcon } from "@solar-icons/react/bold/volume-loud";
-export { VolumeSmallIcon } from "@solar-icons/react/linear/volume-small";
-export { VolumeCrossIcon as VolumeMutedIcon } from "@solar-icons/react/linear/volume-cross";
-export { VolumeCrossIcon as VolumeMutedActiveIcon } from "@solar-icons/react/bold/volume-cross";
+export const VolumeLoudIcon = line(VOLUME_LOUD);
+export const VolumeLoudActiveIcon = tile(VOLUME_LOUD);
+export const VolumeSmallIcon = line(VOLUME_SMALL);
+export const VolumeMutedIcon = line(VOLUME_MUTED);
+export const VolumeMutedActiveIcon = tile(VOLUME_MUTED);
 
-/* ── Library state (like / save / rate) ────────────────────────────── */
-export { HeartIcon } from "@solar-icons/react/linear/heart";
-export { DislikeIcon } from "@solar-icons/react/linear/dislike";
-export { DislikeIcon as DislikeActiveIcon } from "@solar-icons/react/bold/dislike";
-export { HeartIcon as HeartActiveIcon } from "@solar-icons/react/bold/heart";
-export { HeartCrackIcon as HeartBrokenIcon } from "@solar-icons/react/linear/heart-crack";
-export { BookmarkIcon } from "@solar-icons/react/linear/bookmark";
-export { BookmarkIcon as BookmarkActiveIcon } from "@solar-icons/react/bold/bookmark";
-export { StarIcon } from "@solar-icons/react/linear/star";
-export { StarIcon as StarActiveIcon } from "@solar-icons/react/bold/star";
+/* ── Library and ratings ───────────────────────────────────────────── */
+export const HeartIcon = line(HEART);
+export const HeartActiveIcon = filled(HEART);
+export const HeartBrokenIcon = lucide(HeartCrack);
+export const DislikeIcon = lucide(ThumbsDown);
+export const DislikeActiveIcon = lucide(ThumbsDown, { fill: "currentColor" });
+export const BookmarkIcon = lucide(Bookmark);
+export const BookmarkActiveIcon = lucide(Bookmark, { fill: "currentColor" });
+export const StarIcon = lucide(Star);
+export const StarActiveIcon = lucide(Star, { fill: "currentColor" });
+export const MusicNoteIcon = lucide(Music);
+export const MusicNoteActiveIcon = lucideTile(Music);
+export const PlaylistIcon = lucide(ListMusic);
+export const PlaylistActiveIcon = lucideTile(ListMusic);
+export const PlaylistAddIcon = lucide(ListPlus);
+export const AlbumIcon = lucide(Disc3);
+export const AlbumActiveIcon = lucideTile(Disc3);
+export const EyeIcon = lucide(Eye);
+export const EyeClosedIcon = lucide(EyeOff);
+export const LyricsIcon: IconComponent = (props) => (
+  <Svg {...props}>
+    <rect x="9" y="3.5" width="6" height="10.5" rx="3" />
+    <path d={MIC_STAND} />
+  </Svg>
+);
+export const LyricsActiveIcon: IconComponent = (props) => (
+  <Svg {...props}>
+    <rect x="9" y="3.5" width="6" height="10.5" rx="3" fill="currentColor" />
+    <path d={MIC_STAND} />
+  </Svg>
+);
 
-/* ── Content types ─────────────────────────────────────────────────── */
-export { MusicNoteIcon } from "@solar-icons/react/linear/music-note";
-export { MusicNoteIcon as MusicNoteActiveIcon } from "@solar-icons/react/bold/music-note";
-export { PlaylistIcon } from "@solar-icons/react/linear/playlist";
-export { PlaylistIcon as PlaylistActiveIcon } from "@solar-icons/react/bold/playlist";
-export { PlaylistMinimalisticIcon as PlaylistAddIcon } from "@solar-icons/react/linear/playlist-minimalistic";
-export { EyeIcon } from "@solar-icons/react/linear/eye";
-export { EyeClosedIcon } from "@solar-icons/react/linear/eye-closed";
-export { VinylIcon as AlbumIcon } from "@solar-icons/react/linear/vinyl";
-export { VinylIcon as AlbumActiveIcon } from "@solar-icons/react/bold/vinyl";
-export { Microphone2Icon as LyricsIcon } from "@solar-icons/react/linear/microphone-2";
-export { Microphone2Icon as LyricsActiveIcon } from "@solar-icons/react/bold/microphone-2";
+/* ── Files ─────────────────────────────────────────────────────────── */
+export const FolderIcon = line(FOLDER);
+export const FolderOpenIcon = lucide(FolderOpen);
+export const FolderAddIcon = lucide(FolderPlus);
+export const ImageIcon = lucide(Image);
+export const LogFileIcon = lucide(FileText);
 
-/* ── Files & folders (local music) ─────────────────────────────────── */
-export { FolderIcon } from "@solar-icons/react/linear/folder";
-export { FolderOpenIcon } from "@solar-icons/react/linear/folder-open";
-export { AddFolderIcon as FolderAddIcon } from "@solar-icons/react/linear/add-folder";
-export { GalleryIcon as ImageIcon } from "@solar-icons/react/linear/gallery";
-export { DocumentTextIcon as LogFileIcon } from "@solar-icons/react/linear/document-text";
+/* ── Navigation ────────────────────────────────────────────────────── */
+export const HomeIcon = line(HOME);
+export const HomeActiveIcon = filled(HOME);
+export const LibraryIcon = line(LIBRARY);
+export const LibraryActiveIcon = filled(LIBRARY);
+export const DownloadsIcon = line(DOWNLOADS);
+export const DownloadsActiveIcon = tile(DOWNLOAD_ARROW);
+export const SettingsIcon: IconComponent = (props) => (
+  <Svg {...props}>
+    <path d={GEAR} />
+    <circle cx="12" cy="12" r="3" />
+  </Svg>
+);
+export const SettingsActiveIcon: IconComponent = (props) => (
+  <Svg {...props}>
+    <path d={`${GEAR}${GEAR_HOLE}`} fill="currentColor" fillRule="evenodd" />
+  </Svg>
+);
+export const QueuePanelIcon = line(QUEUE);
+export const QueuePanelActiveIcon = tile(QUEUE);
+export const SearchIcon = line(SEARCH);
+export const CompassIcon = lucide(Compass);
+export const RadioIcon = lucide(Radio);
+export const PaletteIcon = lucide(Palette);
+export const PaletteActiveIcon = lucideTile(Palette);
+export const ListIcon = lucide(List);
+export const SortIcon = lucide(ArrowUpDown);
+export const BackIcon = line(BACK);
+export const ForwardIcon = line(FORWARD);
+export const ChevronDownIcon = line(CHEVRON_DOWN);
+export const MoreIcon: IconComponent = (props) => (
+  <Svg {...props} stroke="none">
+    <rect x="10.75" y="4.5" width="2.5" height="2.5" rx="0.5" fill="currentColor" />
+    <rect x="10.75" y="10.75" width="2.5" height="2.5" rx="0.5" fill="currentColor" />
+    <rect x="10.75" y="17" width="2.5" height="2.5" rx="0.5" fill="currentColor" />
+  </Svg>
+);
+export const MiniPlayerIcon: IconComponent = (props) => (
+  <Svg {...props}>
+    <rect x="3.5" y="5" width="17" height="14" rx="2" />
+    <rect x="11.5" y="12" width="7" height="5" rx="1" fill="currentColor" stroke="none" />
+  </Svg>
+);
+export const MinimizeIcon = line("M6 12h12");
+export const MaximizeIcon: IconComponent = (props) => (
+  <Svg {...props}>
+    <rect x="6" y="6" width="12" height="12" rx="1.5" />
+  </Svg>
+);
 
-/* ── Navigation & chrome ───────────────────────────────────────────── */
-export { Home2Icon as HomeIcon } from "@solar-icons/react/linear/home-2";
-export { Home2Icon as HomeActiveIcon } from "@solar-icons/react/bold/home-2";
-export { SidebarMinimalisticIcon as QueuePanelIcon } from "@solar-icons/react/linear/sidebar-minimalistic";
-export { MagnifierIcon as SearchIcon } from "@solar-icons/react/linear/magnifier";
-export { CompassIcon } from "@solar-icons/react/linear/compass";
-export { RadioIcon } from "@solar-icons/react/linear/radio";
-export { PaletteIcon } from "@solar-icons/react/linear/palette";
-export { PaletteIcon as PaletteActiveIcon } from "@solar-icons/react/bold/palette";
-export { SettingsIcon } from "@solar-icons/react/linear/settings";
-export { SettingsIcon as SettingsActiveIcon } from "@solar-icons/react/bold/settings";
-export { ListIcon } from "@solar-icons/react/linear/list";
-export { SortIcon } from "@solar-icons/react/linear/sort";
-export { CloseCircleIcon as CloseIcon } from "@solar-icons/react/linear/close-circle";
-export { CloseCircleIcon as CloseActiveIcon } from "@solar-icons/react/bold/close-circle";
-export { FullScreenIcon } from "@solar-icons/react/linear/full-screen";
-export { QuitFullScreenIcon } from "@solar-icons/react/linear/quit-full-screen";
-export { AddCircleIcon as PlusIcon } from "@solar-icons/react/linear/add-circle";
-export { CheckCircleIcon as CheckIcon } from "@solar-icons/react/linear/check-circle";
-export { CheckCircleIcon as CheckActiveIcon } from "@solar-icons/react/bold/check-circle";
-export { RefreshIcon } from "@solar-icons/react/linear/refresh";
-export { DownloadMinimalisticIcon as DownloadIcon } from "@solar-icons/react/linear/download-minimalistic";
-export { DownloadMinimalisticIcon as DownloadActiveIcon } from "@solar-icons/react/bold/download-minimalistic";
-export { TrashBinTrashIcon as TrashIcon } from "@solar-icons/react/linear/trash-bin-trash";
-export { CopyIcon } from "@solar-icons/react/linear/copy";
-export { PenIcon as PencilIcon } from "@solar-icons/react/linear/pen";
-export { LinkIcon } from "@solar-icons/react/linear/link";
+/* ── Actions ───────────────────────────────────────────────────────── */
+export const CloseIcon = line(CLOSE);
+export const CloseActiveIcon = tile(CLOSE);
+export const FullScreenIcon = line(EXPAND);
+export const QuitFullScreenIcon = line(COLLAPSE);
+export const PlusIcon = line(PLUS);
+export const CheckIcon = line(CHECK);
+export const CheckActiveIcon = tile(CHECK);
+export const RefreshIcon = line(SYNC);
+export const TrashIcon = lucide(Trash2);
+export const CopyIcon = lucide(Copy);
+export const PencilIcon = lucide(Pencil);
+export const LinkIcon = lucide(Link);
+export const ArrowUpIcon = lucide(ArrowUp);
+export const ArrowDownIcon = lucide(ArrowDown);
+export const ArrowLeftIcon = lucide(ArrowLeft);
+export const ArrowRightIcon = lucide(ArrowRight);
 
-/* ── Arrows ────────────────────────────────────────────────────────── */
-export { ArrowUpIcon } from "@solar-icons/react/linear/arrow-up";
-export { ArrowDownIcon } from "@solar-icons/react/linear/arrow-down";
-export { ArrowLeftIcon } from "@solar-icons/react/linear/arrow-left";
-export { ArrowRightIcon } from "@solar-icons/react/linear/arrow-right";
-export { AltArrowDownIcon as ChevronDownIcon } from "@solar-icons/react/linear/alt-arrow-down";
+/* ── Downloads ─────────────────────────────────────────────────────── */
+export const DownloadIcon: IconComponent = (props) => (
+  <Svg {...props}>
+    <rect x="3.75" y="3.75" width="16.5" height="16.5" rx="2.5" />
+    <path d={DOWNLOAD_ARROW} />
+  </Svg>
+);
+export const DownloadActiveIcon = tile(DOWNLOAD_ARROW);
 
-/* ── Account & settings surfaces ───────────────────────────────────── */
-export { UserIcon } from "@solar-icons/react/linear/user";
-export { UserIcon as UserActiveIcon } from "@solar-icons/react/bold/user";
-export { UserPlusIcon } from "@solar-icons/react/linear/user-plus";
-export { Login2Icon as LoginIcon } from "@solar-icons/react/linear/login-2";
-export { GlobalIcon } from "@solar-icons/react/linear/global";
-export { Logout2Icon as LogoutIcon } from "@solar-icons/react/linear/logout-2";
-export { KeyIcon } from "@solar-icons/react/linear/key";
-export { BugIcon } from "@solar-icons/react/linear/bug";
-export { ClockCircleIcon as ClockIcon } from "@solar-icons/react/linear/clock-circle";
-export { SpeedometerMaxIcon as SpeedIcon } from "@solar-icons/react/linear/speedometer-max";
-export { Tuning2Icon as EqualizerIcon } from "@solar-icons/react/linear/tuning-2";
-export { DisketteIcon as SaveIcon } from "@solar-icons/react/linear/diskette";
-export { CupHotIcon as CoffeeIcon } from "@solar-icons/react/linear/cup-hot";
-export { MagicWandIcon as DiceIcon } from "@solar-icons/react/linear/magic-wand";
-export { MagicWandIcon as DiceActiveIcon } from "@solar-icons/react/bold/magic-wand";
+/**
+ * A download in progress: the square fills from the bottom. A square rather than a ring,
+ * because the design has no circles.
+ */
+export function DownloadProgressIcon({ progress = 0, ...props }: IconProps & { progress?: number }) {
+  const height = 11 * Math.max(0, Math.min(1, progress));
+  return (
+    <Svg {...props}>
+      <rect x="3.75" y="3.75" width="16.5" height="16.5" rx="2.5" />
+      <rect x="6.5" y={6.5 + 11 - height} width="11" height={height} rx="0.75" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+/* ── Account and system ────────────────────────────────────────────── */
+export const UserIcon = lucide(User);
+export const UserActiveIcon = lucide(User, { fill: "currentColor" });
+export const UserPlusIcon = lucide(UserPlus);
+export const LoginIcon = lucide(LogIn);
+export const GlobalIcon = lucide(Globe);
+export const LogoutIcon = lucide(LogOut);
+export const KeyIcon = lucide(Key);
+export const BugIcon = lucide(Bug);
+export const ClockIcon = lucide(Clock);
+export const SpeedIcon = lucide(Gauge);
+export const EqualizerIcon: IconComponent = (props) => (
+  <Svg {...props}>
+    <path d="M6 4v16M12 4v16M18 4v16" />
+    <rect x="4" y="13" width="4" height="3" rx="0.5" fill="currentColor" />
+    <rect x="10" y="7" width="4" height="3" rx="0.5" fill="currentColor" />
+    <rect x="16" y="11" width="4" height="3" rx="0.5" fill="currentColor" />
+  </Svg>
+);
+export const SaveIcon = lucide(Save);
+export const CoffeeIcon = lucide(Coffee);
+export const DiceIcon = lucide(WandSparkles);
+export const DiceActiveIcon = lucideTile(WandSparkles);
+
 
 /**
  * YouTube Music brand mark.
  *
- * Same reasoning as `GitHubIcon` and `LastFmIcon`: Solar ships no brand icons, and the header
+ * Same reasoning as `GitHubIcon` and `LastFmIcon`: icon sets ship no brand marks, and the header
  * indicator has to be recognisable as YouTube Music rather than a generic play glyph sitting
  * next to the Last.fm and Discord marks.
- * Path from Simple Icons (CC0), sized/coloured like a Solar icon.
+ * Path from Simple Icons (CC0), sized and coloured like the other icons.
  */
 export function YouTubeMusicIcon({ size = 24, ...props }: SVGProps<SVGSVGElement> & { size?: number | string }) {
   return (
@@ -150,9 +382,9 @@ export function YouTubeMusicIcon({ size = 24, ...props }: SVGProps<SVGSVGElement
 /**
  * GitHub brand mark.
  *
- * Same reasoning as `LastFmIcon` below: Solar ships no brand icons, and a brand mark has to
+ * Same reasoning as `LastFmIcon` below: An icon set ships no brand marks, and a brand mark has to
  * stay recognisable rather than be approximated by a generic glyph.
- * Path from Simple Icons (CC0), sized/coloured like a Solar icon.
+ * Path from Simple Icons (CC0), sized and coloured like the other icons.
  */
 export function GitHubIcon({ size = 24, ...props }: SVGProps<SVGSVGElement> & { size?: number | string }) {
   return (
@@ -177,7 +409,7 @@ export function GitHubIcon({ size = 24, ...props }: SVGProps<SVGSVGElement> & { 
  * those four colours, and a monochrome version of it reads as a generic glyph. It sits on the
  * sign-in button, where the whole point is that it is recognisably Google's — the account
  * being signed into really is a Google account.
- * Paths are Google's published mark, sized like a Solar icon.
+ * Paths are Google's published mark, sized like the other icons.
  */
 export function GoogleIcon({ size = 24, ...props }: SVGProps<SVGSVGElement> & { size?: number | string }) {
   return (
@@ -212,9 +444,9 @@ export function GoogleIcon({ size = 24, ...props }: SVGProps<SVGSVGElement> & { 
 /**
  * Discord brand mark.
  *
- * Same reasoning as the other two brand marks here: Solar ships none, and a brand has to stay
+ * Same reasoning as the other two brand marks here: An icon set ships none, and a brand has to stay
  * recognisable rather than be stood in for by a generic chat glyph.
- * Path from Simple Icons (CC0), sized/coloured like a Solar icon.
+ * Path from Simple Icons (CC0), sized and coloured like the other icons.
  */
 export function DiscordIcon({ size = 24, ...props }: SVGProps<SVGSVGElement> & { size?: number | string }) {
   return (
@@ -235,9 +467,9 @@ export function DiscordIcon({ size = 24, ...props }: SVGProps<SVGSVGElement> & {
 /**
  * Last.fm brand mark.
  *
- * Solar ships no brand icons, and a brand mark must stay recognisable — so this one stays
+ * An icon set ships no brand marks, and a brand mark must stay recognisable — so this one stays
  * a hand-rolled SVG rather than being approximated by a generic music glyph.
- * Path from Simple Icons (CC0). Sized/coloured like a Solar icon so it drops into the same slots.
+ * Path from Simple Icons (CC0). Sized and coloured like the other icons so it drops into the same slots.
  */
 export function LastFmIcon({ size = 24, ...props }: SVGProps<SVGSVGElement> & { size?: number | string }) {
   return (

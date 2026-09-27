@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { cn } from "@/lib/utils";
-import { CloseIcon, VolumeLoudActiveIcon } from "@/ui/icons";
+import { CloseIcon, PlusIcon, VolumeLoudActiveIcon } from "@/ui/icons";
 import { Tab } from "../types/tab";
 import { isLinux } from "../platform";
-import { AddSquareIcon } from "@solar-icons/react/linear";
 import { Button } from "@/components/motion/button";
 
 const MAX_TAB_TITLE_LENGTH = 32;
@@ -244,7 +243,7 @@ export function MusicTabs({
           aria-label="Add new tab"
           data-onboarding="new-tab"
         >
-          <AddSquareIcon size={18} />
+          <PlusIcon size={18} />
         </Button>
       </div>
     </div>

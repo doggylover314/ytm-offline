@@ -5,7 +5,7 @@ import { ErrorBoundary } from "./ui/components/ErrorBoundary";
 import "./ui/styles/global.css";
 import { logInternalError, logInternalInfo } from "./internal/logging";
 import { applyPaperPcMode, hydratePaperPcMode } from "./ui/settings/paperPcMode";
-import { applyTheme, hydrateTheme, watchSystemTheme } from "./ui/settings/theme";
+import { applyTheme } from "./ui/settings/theme";
 import {
   applyNativeWindowControls,
   hydrateWindowControlSettings,
@@ -51,7 +51,6 @@ void detectTilingWindowManager();
 // Before React mounts: a late theme apply shows a flash of the wrong palette.
 applyTheme();
 applyAccentColor();
-watchSystemTheme();
 applyPaperPcMode();
 applyRenderEffects();
 // One line a minute in the app log, so "the renderer is using 220 MB" can be split into heap,
@@ -64,7 +63,6 @@ void hydrateMainWindowGeometry().then(restoreMainWindowGeometry).catch((error) =
 void Promise.all([
   hydratePaperPcMode(),
   hydrateRenderEffects(),
-  hydrateTheme(),
   hydrateAccentColor(),
   hydrateWindowControlSettings(),
   hydrateMediaSessionSettings(),

@@ -7,12 +7,15 @@
  * stops arbitrary variants like `[&_input]:…` from being extracted.)
  */
 /*
- * Inter, self-hosted via @fontsource-variable. Bundled rather than loaded from a CDN: this
- * is an offline desktop app, and a webfont request that fails leaves the UI on a fallback
- * face. Imported here rather than in the entry modules because main.tsx and mini.tsx both
- * pull in this stylesheet, so one import covers both windows.
+ * IBM Plex, self-hosted. Bundled rather than loaded from a CDN: this is an offline desktop
+ * app, and a webfont request that fails leaves the UI on a fallback face. Imported here
+ * rather than in the entry modules because main.tsx and mini.tsx both pull in this
+ * stylesheet, so one import covers both windows.
  */
-@import "@fontsource-variable/inter";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
 @import "tailwindcss";
 @source not "../../../docs";
 
@@ -26,119 +29,74 @@
 @media (prefers-reduced-motion: reduce) { .ytm-overflow-scroll { animation: none; } }
 
 /*
- * Design tokens consumed by the vendored beUI components.
- * Neutral shadcn surfaces, with the app's #ff0033 kept as `primary` (accent only).
+ * Design tokens, from the approved design. Dark only, and every colour is solid: surfaces are
+ * told apart by a small step in grey, never by transparency or a bright border.
  *
- * The UI is borderless: surfaces are separated by background contrast, not outlines.
- * `--color-border` / `--color-input` are kept only because beUI component internals
- * reference them; no app component draws a border.
+ *   background  page                 #0F0F0F
+ *   chrome      top bar, player bar  #161616
+ *   card        raised rows, inputs  #1E1E1E
+ *   muted       hover, secondary     #262626
  */
 @theme {
-  --color-background: oklch(0.145 0 0);
-  --color-foreground: oklch(0.985 0 0);
+  --color-background: #0f0f0f;
+  --color-foreground: #f2f2f2;
 
-  --color-card: oklch(0.285 0 0);
-  --color-card-foreground: oklch(0.985 0 0);
-  --color-popover: oklch(0.205 0 0);
-  --color-popover-foreground: oklch(0.985 0 0);
+  --color-chrome: #161616;
+  --color-card: #1e1e1e;
+  --color-card-foreground: #f2f2f2;
+  --color-popover: #1e1e1e;
+  --color-popover-foreground: #f2f2f2;
 
-  --color-muted: oklch(0.269 0 0);
-  --color-muted-foreground: oklch(0.708 0 0);
+  --color-muted: #262626;
+  --color-muted-foreground: #a3a3a3;
 
-  /* Brand accent — the one colour carried over from the old identity. */
+  /* The accent. The user can change it; see settings/accent.ts. */
   --color-primary: #ff0033;
-  --color-primary-foreground: oklch(0.985 0 0);
+  --color-primary-foreground: #ffffff;
+  /* The playing song's title: the accent lightened enough to read as text on the page. */
+  --color-accent-text: #ff4d6d;
 
-  --color-secondary: oklch(0.269 0 0);
-  --color-secondary-foreground: oklch(0.985 0 0);
+  --color-secondary: #262626;
+  --color-secondary-foreground: #f2f2f2;
 
-  --color-destructive: oklch(0.704 0.191 22.216);
-  --color-destructive-foreground: oklch(0.985 0 0);
+  --color-destructive: #ff6b6b;
+  --color-destructive-foreground: #0f0f0f;
 
-  --color-border: oklch(1 0 0 / 10%);
-  --color-input: oklch(1 0 0 / 15%);
+  --color-border: #2e2e2e;
+  --color-input: #262626;
   --color-ring: #ff0033;
- 
+
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Rectangles with slightly rounded corners: 4px for controls, 6px for artwork and panels.
+     The larger steps collapse onto 6px so no class in the app can draw a pill. */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 6px;
+  --radius-2xl: 6px;
+  --radius-3xl: 6px;
+  --radius-4xl: 6px;
 }
 
-/*
- * Window chrome tokens.
- */
-:root {
-  /*
-   * The window's own edge. This window is transparent and its OS shadow is disabled, so a
-   * hairline is the only thing separating the app from whatever is behind it — without it
-   * the rounded corners read as a cut-out rather than a pane. Same treatment as the picks
-   * cards: a light inner ring plus a specular highlight along the top edge.
-   */
-  --window-edge: oklch(1 0 0 / 14%);
-  --window-edge-highlight: oklch(1 0 0 / 22%);
+/* No pills or circles anywhere; `rounded-full` is kept as a class name but draws a rectangle. */
+.rounded-full {
+  border-radius: 4px;
 }
 
-/*
- * Light theme. The @theme block above is the dark default; this flips the same token
- * names, so every component follows without knowing a theme exists.
- *
- * `--color-primary` stays #ff0033 in both — it is the brand accent, not a surface.
- * Contrast is tuned for white text on primary in dark and near-black text elsewhere.
- */
-html[data-theme="light"] {
-  /*
-   * The background is deliberately *below* pure white and cards sit at white, i.e. the
-   * inverse of the dark theme where cards are lighter than the background. This app is
-   * borderless — surfaces are told apart by contrast alone — so a white-on-white pairing
-   * (the obvious first choice) makes every card, popover and hover state disappear.
-   */
-  --color-background: oklch(0.954 0 0);
-  --color-foreground: oklch(0.205 0 0);
-
-  --color-card: oklch(1 0 0);
-  --color-card-foreground: oklch(0.205 0 0);
-  --color-popover: oklch(1 0 0);
-  --color-popover-foreground: oklch(0.205 0 0);
-
-  --color-muted: oklch(0.915 0 0);
-  /* 0.45 keeps secondary text at ~4.6:1 on the background — readable, still recessive. */
-  --color-muted-foreground: oklch(0.45 0 0);
-
-  --color-secondary: oklch(0.915 0 0);
-  --color-secondary-foreground: oklch(0.205 0 0);
-
-  --color-border: oklch(0 0 0 / 10%);
-  --color-input: oklch(0 0 0 / 14%);
-
-  /* A white hairline vanishes on a light surface; the edge has to darken instead. */
-  --window-edge: oklch(0 0 0 / 14%);
-  --window-edge-highlight: oklch(1 0 0 / 60%);
-
-  color-scheme: light;
-}
-
-html[data-theme="dark"] {
+html {
   color-scheme: dark;
 }
 
 /*
- * Layout constants read from TSX (`h-[var(--titlebar-height)]`) rather than colours —
- * every colour now comes from the @theme block above.
+ * Layout constants read from TSX (`h-[var(--titlebar-height)]`) rather than colours.
  */
 :root {
-  --titlebar-height: 44px;
+  --titlebar-height: 48px;
   --sidebar-width: 220px;
-
-  /* macOS-style window rounding. The window itself is transparent; the app root paints
-     this radius, so the corners must stay unpainted all the way up the tree. */
-  --window-radius: 14px;
-  border-color: transparent;
-}
-
-/*
- * No radius when the window fills the screen, or when the OS is drawing the frame —
- * a rounded corner inside a squared-off native frame shows the desktop through the gap.
- */
-html[data-window-maximized],
-html[data-native-window-controls],
-html[data-platform-linux] {
+  /* The window is opaque with square corners. */
   --window-radius: 0px;
 }
 
@@ -146,18 +104,9 @@ html,
 body,
 #root {
   height: 100%;
-  /* Transparent so the app root's rounded corners are actually cut out.
-     The mini-player window enforces the same with `!important` in mini.html. */
-  background: transparent;
+  background: var(--color-background);
   color: var(--color-foreground);
-  font-family: "Inter Variable", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
-    Arial, "Apple Color Emoji", "Segoe UI Emoji";
-  /*
-   * `cv11` gives Inter the single-storey `l`/`g` that reads closer to a geometric UI face,
-   * and tabular numerals stop timers and durations from jittering as the digits change.
-   */
-  font-feature-settings: "cv11", "ss01";
-  font-optical-sizing: auto;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -174,36 +123,28 @@ time,
  * renders at body size. Utilities on an element still override these.
  */
 @layer base {
-  /*
-   * Sized against a 16px body, the way Spotify's chrome is: page titles are genuinely large,
-   * section headers clearly outrank rows, and nothing in the reading column falls below
-   * 14px. The previous scale topped out at 24/16/14, which read as one flat grey mass once
-   * the body text around it was also 12-13px.
-   */
+  /* From the approved design: page title 32, section 20, sub-heading 16, all semibold. */
   h1 {
     font-size: 2rem;
-    font-weight: 700;
-    letter-spacing: -0.03em;
+    font-weight: 600;
     line-height: 1.15;
   }
   h2 {
-    font-size: 1.5rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
+    font-size: 1.25rem;
+    font-weight: 600;
     line-height: 1.25;
   }
   h3 {
-    font-size: 1.125rem;
+    font-size: 1rem;
     font-weight: 600;
-    letter-spacing: -0.01em;
     line-height: 1.3;
   }
 }
 
 /* Selection picks up the brand accent instead of the browser's default blue. */
 ::selection {
-  background: color-mix(in oklab, var(--color-primary) 30%, transparent);
-  color: var(--color-foreground);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
 }
 
 /* Native-feeling desktop defaults */
@@ -257,28 +198,6 @@ input:focus-visible,
 textarea:focus,
 textarea:focus-visible {
   outline: none;
-}
-
-/*
- * Potato PC mode: the opaque palette.
- *
- * This block used to also carry a wall of `!important` resets — animation, transition,
- * shadow, will-change, backdrop-filter — which is exactly what the `data-fx-off` switches
- * below now do, one category at a time. Two mechanisms killing the same properties meant the
- * blunt one silently won: with Potato PC on, turning an individual effect back on to see what
- * it cost changed nothing, and the switch looked broken.
- *
- * So Potato PC is now the palette plus `setAllEffectsDisabled(true)` (see renderEffects.ts),
- * and there is one mechanism. What remains here genuinely cannot live in the switches: the
- * default surfaces are translucent and lean on a backdrop-filter that the `backdrop` switch
- * removes, so without opaque replacements the mode's own surfaces stop being readable.
- */
-html[data-paper-pc] {
-  --color-background: #070707;
-  --color-card: #181818;
-  --color-popover: #202020;
-  --color-muted: #262626;
-  --color-border: #2c2c2c;
 }
 
 /*

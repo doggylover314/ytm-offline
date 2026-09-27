@@ -2,9 +2,11 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Tooltip } from "@/components/motion/tooltip";
 import {
+  BackIcon,
   CheckIcon,
   ClockIcon,
   DiceIcon,
+  ForwardIcon,
   PauseIcon,
   PlaylistAddIcon,
   ShuffleActiveIcon,
@@ -28,7 +30,6 @@ import {
 } from "../../settings/queuePanel";
 import { ArtistLinks } from "../ArtistLinks";
 import { TrackArtwork } from "../TrackArtwork";
-import { SquareAltArrowLeftIcon, SquareAltArrowRightIcon } from "@solar-icons/react/linear";
 
 interface QueuePanelProps {
   onClose: () => void;
@@ -676,9 +677,9 @@ export function QueuePanel({ onClose }: QueuePanelProps) {
         >
           <button type="button" className={ICON_BUTTON} onClick={toggleQueuePanelCollapsed}>
             {collapsed ? (
-              <SquareAltArrowLeftIcon size={22} aria-hidden="true" />
+              <BackIcon size={22} aria-hidden="true" />
             ) : (
-              <SquareAltArrowRightIcon size={22} aria-hidden="true" />
+              <ForwardIcon size={22} aria-hidden="true" />
             )}
             <span className="sr-only">{collapsed ? "Expand queue" : "Collapse queue"}</span>
           </button>
