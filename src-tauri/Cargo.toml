@@ -30,7 +30,6 @@ base64 = "0.22"
 url = "2.5"
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service"] }
 discord-rich-presence = "0.2"
-tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-dialog = "2"
 md5 = "0.8.0"

@@ -65,9 +65,7 @@ import {
   checkForUpdates,
   getUpdateFailureMessage,
   getInstalledVersion,
-  installUpdate,
   type UpdateInfo,
-  type UpdateInstallProgress,
 } from "../../internal/updateChecker";
 import {
   clearCache,
@@ -590,9 +588,8 @@ export function SettingsPage({
   const [installedVersion, setInstalledVersion] = useState<string | null>(null);
   const [updateResult, setUpdateResult] = useState<UpdateInfo | null>(null);
   const [updateStatus, setUpdateStatus] = useState<
-    "idle" | "checking" | "installing" | "current" | "error"
+    "idle" | "checking" | "current" | "error"
   >("idle");
-  const [updateProgress, setUpdateProgress] = useState<UpdateInstallProgress | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [autostartEnabled, setAutostartEnabledState] = useState(false);
   const [autostartLoading, setAutostartLoading] = useState(true);
@@ -735,25 +732,12 @@ export function SettingsPage({
     setUpdateStatus("checking");
     setUpdateResult(null);
     setUpdateError(null);
-    setUpdateProgress(null);
     try {
       const update = await checkForUpdates();
       setUpdateResult(update);
       setUpdateStatus(update ? "idle" : "current");
     } catch (error) {
       setUpdateError(getUpdateFailureMessage(error));
-      setUpdateStatus("error");
-    }
-  };
-
-  const handleInstallUpdate = async () => {
-    if (!updateResult) return;
-    setUpdateStatus("installing");
-    setUpdateError(null);
-    try {
-      await installUpdate(updateResult, setUpdateProgress);
-    } catch {
-      setUpdateError("Unable to install the update. You can download it from GitHub.");
       setUpdateStatus("error");
     }
   };
@@ -1269,27 +1253,11 @@ export function SettingsPage({
 
               {updateResult && (
                 <div className="flex flex-col gap-1">
-                  <span>
-                    {updateStatus === "installing"
-                      ? updateProgress?.percent !== undefined
-                        ? `Downloading version ${updateResult.version}: ${updateProgress.percent}%`
-                        : `Preparing version ${updateResult.version}...`
-                      : `Version ${updateResult.version} is available.`}
-                  </span>
-                  {updateResult.canInstall && (
-                    <button
-                      className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-card disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                      type="button"
-                      disabled={updateStatus === "installing"}
-                      onClick={() => void handleInstallUpdate()}
-                    >
-                      {updateStatus === "installing" ? "Installing..." : "Install"}
-                    </button>
-                  )}
+                  <span>{`Version ${updateResult.version} is available.`}</span>
                   {/* The one link where a silent failure strands the user: if this cannot
                       open, they have no other route to the download. */}
                   <ExternalLinkButton
-                    label={updateResult.canInstall ? "View changes" : "Download"}
+                    label="Download"
                     url={updateResult.releaseUrl}
                     className="px-4 py-2"
                   />
