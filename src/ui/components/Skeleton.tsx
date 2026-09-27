@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
  *
  * A spinner says "wait"; a shape says "this is what's coming" — the difference between a web
  * page and something that feels native. Every skeleton here is sized off the real component it
- * precedes (`TrackRow`, `AlbumCard`, `PickCard`) so the swap from placeholder to content never
+ * precedes (`TrackRow`, `AlbumCard`) so the swap from placeholder to content never
  * jumps the layout.
  *
  * `aria-hidden` throughout: the loading state is announced once, by the `role="status"` wrapper
@@ -121,19 +121,4 @@ export function AlbumGridSkeleton({
       ))}
     </div>
   );
-}
-
-/**
- * One `PickCard`'s worth of nothing — a slot for `CylinderCarousel` itself, not a replacement
- * for it.
- *
- * The carousel measures its own container and fits its curve, taper and item count to it (see
- * its `ResizeObserver`); a hand-built row of skeleton cards next to it would need to duplicate
- * all three and would still drift the moment either changed. Handing it these as `children`
- * instead means the loading state is exactly as responsive as the real one, because it *is* the
- * real one — only what fills each slot differs. `h-full` and `rounded-2xl` match the space the
- * carousel gives every child and `PickCard`'s own outer corner.
- */
-export function PickCardSkeleton() {
-  return <SkeletonBlock className="h-full w-full rounded-2xl" />;
 }

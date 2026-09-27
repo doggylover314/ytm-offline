@@ -368,12 +368,6 @@ export default function App() {
     () => restoredSession?.nextTabId ?? 2,
   );
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  /*
-   * The sidebar is a fixed icon rail. 72px sits below the Sidebar's own text-hide threshold,
-   * so every row renders as artwork only and explains itself through a tooltip on hover.
-   * Still state rather than a constant because TitleBar aligns its home button to this width.
-   */
-  const [sidebarWidth, setSidebarWidth] = useState(62);
   const [queuePanelWidth, setQueuePanelWidth] = useState(340);
   const isQueuePanelCollapsed = useQueuePanelCollapsed();
   const [loadingScreenState, setLoadingScreenState] = useState<"visible" | "leaving" | "hidden">("visible");
@@ -858,7 +852,6 @@ export default function App() {
     setTabs([{ id: "1", view: "home" }]);
     setActiveTabId("1");
     setNextTabId(2);
-    setSidebarWidth(240);
     setQueuePanelWidth(340);
     clearAppSession();
 
@@ -1984,10 +1977,6 @@ useEffect(() => {
       <div className="flex min-h-0 flex-1 flex-col">
 
         <Layout
-          sidebarWidth={sidebarWidth}
-          onSidebarWidthChange={setSidebarWidth}
-          onNavigateAlbum={handleNavigateAlbum}
-          onNavigatePlaylist={handleNavigatePlaylist}
           showSearchBar={activeTab?.view === "home" && !playerUIState.isLyricsOpen}
           onOpenSearch={() => setIsSearchOpen(true)}
           canGoBack={canNavigateBack}
@@ -1995,7 +1984,6 @@ useEffect(() => {
           onNavigateBack={handleNavigateBack}
           onNavigateForward={handleNavigateForward}
           fullBleedContent={playerUIState.isLyricsOpen}
-          hideSidebar
           showTransientScrollbar={
             !playerUIState.isLyricsOpen
             && (activeTab?.view === "playlist" || activeTab?.view === "album")

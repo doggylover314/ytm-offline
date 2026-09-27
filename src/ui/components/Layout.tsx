@@ -2,15 +2,9 @@ import { ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } 
 import { AnimatePresence, motion } from "motion/react";
 import { cn } from "@/lib/utils";
 import { SearchBar } from "./SearchBar";
-import { Sidebar } from "./Sidebar";
-import type { Album, Playlist } from "../../datasource/types";
 
 interface LayoutProps {
   children: ReactNode;
-  sidebarWidth: number;
-  onSidebarWidthChange: (width: number) => void;
-  onNavigateAlbum: (album: Album) => void;
-  onNavigatePlaylist: (playlist: Playlist) => void;
   showSearchBar: boolean;
   onOpenSearch: () => void;
   canGoBack: boolean;
@@ -18,7 +12,6 @@ interface LayoutProps {
   onNavigateBack: () => void;
   onNavigateForward: () => void;
   fullBleedContent?: boolean;
-  hideSidebar?: boolean;
   showTransientScrollbar?: boolean;
   rightPanel?: ReactNode;
   rightPanelWidth?: number;
@@ -39,10 +32,6 @@ const MAX_SCROLLBAR_THUMB_HEIGHT = 86;
 
 export function Layout({ 
   children, 
-  sidebarWidth,
-  onSidebarWidthChange,
-  onNavigateAlbum,
-  onNavigatePlaylist,
   showSearchBar,
   onOpenSearch,
   canGoBack,
@@ -50,7 +39,6 @@ export function Layout({
   onNavigateBack,
   onNavigateForward,
   fullBleedContent = false,
-  hideSidebar = false,
   showTransientScrollbar = false,
   rightPanel,
   rightPanelWidth = 340,
@@ -229,14 +217,6 @@ export function Layout({
      
 
       <div className="relative flex min-h-0 min-w-0 flex-1">
-        {!hideSidebar && (
-          <Sidebar
-            width={sidebarWidth}
-            onWidthChange={onSidebarWidthChange}
-            onNavigateAlbum={onNavigateAlbum}
-            onNavigatePlaylist={onNavigatePlaylist}
-          />
-        )}
         {/* No backdrop-blur: `bg-background` is fully opaque, so a backdrop filter here costs a
             composited layer and a blur pass to render something nothing can see through. */}
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3 px-4 pt-3 bg-background rounded-tl-lg">

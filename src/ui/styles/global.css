@@ -62,13 +62,9 @@
 }
 
 /*
- * Strength of the ambient accent bloom behind the window (see StarField.tsx). It is a token
- * rather than a fixed opacity because the same wash behaves completely differently per
- * theme: over near-black it reads as a faint glow, over near-white as a pink stain.
+ * Window chrome tokens.
  */
 :root {
-  --ambient-bloom: 1;
-
   /*
    * The window's own edge. This window is transparent and its OS shadow is disabled, so a
    * hairline is the only thing separating the app from whatever is behind it — without it
@@ -110,9 +106,6 @@ html[data-theme="light"] {
 
   --color-border: oklch(0 0 0 / 10%);
   --color-input: oklch(0 0 0 / 14%);
-
-  /* The accent wash has to be far weaker here or the chrome looks tinted pink. */
-  --ambient-bloom: 0.3;
 
   /* A white hairline vanishes on a light surface; the edge has to darken instead. */
   --window-edge: oklch(0 0 0 / 14%);
