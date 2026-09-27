@@ -421,6 +421,8 @@ export default function App() {
   const loadingScreenDismissedRef = useRef(false);
   const loadingScreenStartedAtRef = useRef(performance.now());
   const miniPlayerEnabledRef = useRef(miniPlayerEnabled);
+  /** The mini player only earns its webview process while there is a song to control. */
+  const hasCurrentTrackRef = useRef(false);
   const miniPlayerRestoreSuppressUntilRef = useRef(0);
   const mainWindowDragSuppressUntilRef = useRef(0);
   const lastErrorAlertRef = useRef<string | null>(null);
@@ -430,6 +432,7 @@ export default function App() {
   const sleepRecoveryReloadingRef = useRef(false);
   sessionStateRef.current = { tabs, activeTabId, nextTabId };
   miniPlayerEnabledRef.current = miniPlayerEnabled;
+  hasCurrentTrackRef.current = playerState.currentTrack != null;
   const persistAppSession = useCallback(() => {
     if (sessionPersistenceDisabledRef.current) return;
     const current = sessionStateRef.current;
@@ -1719,9 +1722,9 @@ export default function App() {
  * another application, which is the one moment it does not read as lag.
  */
 useEffect(() => {
-  if (miniPlayerEnabled) return;
+  if (miniPlayerEnabled && playerState.currentTrack) return;
   void destroyMiniPlayerWindow();
-}, [miniPlayerEnabled]);
+}, [miniPlayerEnabled, playerState.currentTrack]);
 
 
 useEffect(() => {
@@ -1741,7 +1744,7 @@ useEffect(() => {
        * webview process only to tear it down again — which is the cost this window is
        * lazily created to avoid in the first place.
        */
-      if (!miniPlayerEnabledRef.current) return;
+      if (!miniPlayerEnabledRef.current || !hasCurrentTrackRef.current) return;
       if (!force && Date.now() < mainWindowDragSuppressUntilRef.current) return;
       if (!force && Date.now() < miniPlayerRestoreSuppressUntilRef.current) return;
 

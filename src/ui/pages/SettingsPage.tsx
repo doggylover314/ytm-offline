@@ -1847,7 +1847,7 @@ export function SettingsPage({
 
             <SettingToggle
               title="Mini player"
-              description="Show compact playback controls when the main window is not focused. Turning this off closes its window and frees around 30 MB."
+              description="Show compact playback controls when you switch away from the app while a song is loaded. Turning this off closes its window and frees its memory."
               checked={miniPlayerEnabled}
               onCheckedChange={setMiniPlayerEnabled}
             />
