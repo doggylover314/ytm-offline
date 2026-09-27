@@ -34,7 +34,7 @@ Downloaded audio is app managed and retains the source format. A durable manifes
 
 Playlist synchronization requires a network connection. When a sync fails, the previously downloaded tracks remain available. YouTube Music can change its private API, so an update may be needed if sign-in, stream resolution, or playlist fetching changes.
 
-Discord Rich Presence needs an application ID belonging to this fork. Set `YTM_OFFLINE_DISCORD_CLIENT_ID` in the app's environment before launching it; the upstream application's ID was removed so presence cannot display upstream branding. Last.fm remains configured in Settings.
+Discord Rich Presence needs an application ID belonging to this fork. Set `YTM_OFFLINE_DISCORD_CLIENT_ID` when building (the release workflow reads it from the repository variable of the same name) and it is compiled into the app. Setting the same variable at launch overrides the built-in ID. The upstream application's ID was removed so presence cannot display upstream branding. Last.fm remains configured in Settings. Last.fm remains configured in Settings.
 
 ## Credits and license
 

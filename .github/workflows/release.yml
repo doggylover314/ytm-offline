@@ -31,6 +31,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run verify
       - name: Build rpm, deb, and AppImage
+        env:
+          # Repository variable (Settings → Secrets and variables → Actions → Variables).
+          # Baked into the binary for Discord Rich Presence; empty leaves presence off.
+          YTM_OFFLINE_DISCORD_CLIENT_ID: ${{ vars.YTM_OFFLINE_DISCORD_CLIENT_ID }}
         run: pnpm tauri build --bundles rpm,deb,appimage --ci
       - uses: actions/upload-artifact@v4
         with:

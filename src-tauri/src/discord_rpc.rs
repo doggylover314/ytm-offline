@@ -42,8 +42,9 @@ impl DiscordRpcManager {
             return Ok(());
         }
 
-        let client_id = std::env::var("YTM_OFFLINE_DISCORD_CLIENT_ID")
-            .map_err(|_| "Set YTM_OFFLINE_DISCORD_CLIENT_ID to your Discord application ID to enable Rich Presence".to_string())?;
+        let client_id = discord_client_id().ok_or_else(|| {
+            "Set YTM_OFFLINE_DISCORD_CLIENT_ID to your Discord application ID to enable Rich Presence".to_string()
+        })?;
         match DiscordIpcClient::new(&client_id) {
             Ok(mut client) => {
                 if let Err(e) = client.connect() {
@@ -200,6 +201,16 @@ impl Default for DiscordRpcManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The Discord application ID: a runtime `YTM_OFFLINE_DISCORD_CLIENT_ID` wins, so a user can
+/// point presence at their own app; otherwise the ID baked in when this binary was built.
+fn discord_client_id() -> Option<String> {
+    std::env::var("YTM_OFFLINE_DISCORD_CLIENT_ID")
+        .ok()
+        .or_else(|| option_env!("YTM_OFFLINE_DISCORD_CLIENT_ID").map(str::to_owned))
+        .map(|id| id.trim().to_owned())
+        .filter(|id| !id.is_empty())
 }
 
 #[cfg(test)]
