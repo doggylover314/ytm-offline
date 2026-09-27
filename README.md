@@ -17,7 +17,7 @@ YTM Offline is not affiliated with YouTube or Google.
 
 ## Build on Linux
 
-Install Node.js, pnpm, Rust, Cargo, and the system libraries required by Tauri 2 and WebKitGTK. On Fedora, the build dependencies include `webkit2gtk4.1-devel`, `gtk3-devel`, `libappindicator-gtk3-devel`, `alsa-lib-devel`, `dbus-devel`, `openssl-devel`, and `cmake`. Audio playback may also require GStreamer codec packages.
+Install Node.js, pnpm, Rust, Cargo, and the system libraries required by Tauri 2 and WebKitGTK. On Fedora, the build dependencies include `webkit2gtk4.1-devel`, `gtk3-devel`, `libappindicator-gtk3-devel`, `alsa-lib-devel`, `dbus-devel`, `openssl-devel`, `cmake`, and `gcc-c++`. Audio playback may also require GStreamer codec packages.
 
 ```bash
 pnpm install
@@ -26,7 +26,13 @@ pnpm run verify
 pnpm tauri build --bundles rpm,deb,appimage
 ```
 
-The packages are written under `src-tauri/target/release/bundle/`. AppImage creation may require additional tools or libraries on the build host. The project identifier is `io.github.doggylover314.ytmoffline`; it uses a separate data directory from the upstream app.
+The packages are written under `src-tauri/target/release/bundle/`.
+
+Release AppImages are built on Ubuntu by the release workflow. To build one on Fedora, linuxdeploy's bundled `strip` and GStreamer plugin need two workarounds:
+
+```bash
+NO_STRIP=true GSTREAMER_PLUGINS_DIR=/usr/lib64/gstreamer-1.0 GSTREAMER_HELPERS_DIR=/usr/libexec/gstreamer-1.0 pnpm tauri build --bundles appimage
+``` The project identifier is `io.github.doggylover314.ytmoffline`; it uses a separate data directory from the upstream app.
 
 ## How downloads are stored
 
