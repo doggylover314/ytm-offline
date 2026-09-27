@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { SpinnerSteps } from "@/components/motion/loader";
-import { cn } from "@/lib/utils";
-import { PlayActiveIcon, QueuePanelIcon } from "@/ui/icons";
+import { MiniPlayerIcon, PlayActiveIcon, QueuePanelActiveIcon, QueuePanelIcon } from "@/ui/icons";
 import { tauriFetch } from "../../../datasource/youtube/tauriFetch";
+import { usePlayerSelector } from "../../../player/playerStore";
+import { logInternalError } from "../../../internal/logging";
+import { useMiniPlayerEnabled } from "../../settings/miniPlayer";
 import { TrackInfo } from "./TrackInfo";
 import { PlaybackControls } from "./PlaybackControls";
 import { SeekBar } from "./SeekBar";
@@ -11,6 +14,7 @@ import { DownloadButton } from "./DownloadButton";
 import { PlaybackOptions } from "./PlaybackOptions";
 import { VolumeControl } from "./VolumeControl";
 import { LyricsButton } from "./LyricsButton";
+import { PLAYER_ICON_BUTTON } from "./playerButton";
 import {
   useCompactPlayerBar,
 } from "../../settings/playerControls";
@@ -142,8 +146,16 @@ export function PlayerBar({ onToggleLyrics, onToggleQueue, isQueueOpen, onConnec
   };
 
   const compactPlayerBar = useCompactPlayerBar();
+  const miniPlayerEnabled = useMiniPlayerEnabled();
+  const hasTrack = usePlayerSelector((state) => state.currentTrack !== null);
 
-
+  // Minimising is what brings the mini player up (App listens for the minimise), so the
+  // button only exists while the mini player is switched on and has a song to show.
+  const openMiniPlayer = () => {
+    void getCurrentWindow().minimize().catch((error) => {
+      logInternalError("PlayerBar.openMiniPlayer failed", error);
+    });
+  };
 
   return (
     <>
@@ -153,20 +165,20 @@ export function PlayerBar({ onToggleLyrics, onToggleQueue, isQueueOpen, onConnec
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            className="flex shrink-0 items-center justify-center gap-3 overflow-hidden bg-muted px-2 py-1  text-sm text-foreground"
+            className="flex shrink-0 items-center justify-center gap-3 overflow-hidden bg-muted px-2 py-1 text-sm text-foreground"
             role="status"
             aria-live="polite"
           >
             <span>You don't have an internet connection</span>
             <button
               type="button"
-              className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs transition-colors hover:bg-card disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex h-7 items-center gap-1.5 rounded px-2.5 text-xs transition-colors hover:bg-border disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onClick={() => void reconnect()}
               disabled={isCheckingConnection}
               aria-label="Reconnect to the internet"
             >
               {isCheckingConnection ? (
-                <SpinnerSteps   size={24}  />
+                <SpinnerSteps size={14} />
               ) : (
                 <PlayActiveIcon size={14} aria-hidden="true" />
               )}
@@ -177,51 +189,52 @@ export function PlayerBar({ onToggleLyrics, onToggleQueue, isQueueOpen, onConnec
       </AnimatePresence>
 
       <div
-        className="group/playerbar flex shrink-0 flex-col gap-1 bg-background px-4 pb-3 pt-2"
+        className="group/playerbar flex h-[76px] shrink-0 flex-col bg-chrome"
         onClick={handlePlayerBarClick}
       >
-        {/* Expanded: the seek bar spans the full bar above everything. */}
+        {/* Expanded: the seek line runs the full width of the bar, above everything. */}
         {!compactPlayerBar && <SeekBar />}
 
-        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4">
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4 px-3">
           <div className="min-w-0">
             <TrackInfo />
           </div>
 
-          {/* Compact: the seek bar tucks under the controls, in the centre column only, so
-              the bar keeps one row of height and the transport stays the anchor. */}
+          {/* Compact: the seek line tucks under the controls, in the centre column only. */}
           <div className="flex flex-col items-center gap-1">
             <PlaybackControls extraControlsAlwaysVisible />
-            {compactPlayerBar && (
-              <div className="w-full min-w-[22rem]">
-                <SeekBar />
-              </div>
-            )}
+            {compactPlayerBar && <SeekBar />}
           </div>
 
           <div className="flex min-w-0 items-center justify-end gap-1">
-            <div className="flex items-center gap-1">
-              <LyricsButton onToggle={onToggleLyrics} />
+            <LyricsButton onToggle={onToggleLyrics} />
 
-              <button
-                type="button"
-                className={cn(
-                  "flex size-8 items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  isQueueOpen
-                    ? "bg-card text-primary"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-                onClick={onToggleQueue}
-                aria-label={isQueueOpen ? "Close queue" : "Open queue"}
-                title={isQueueOpen ? "Close queue" : "Open queue"}
-              >
-                <QueuePanelIcon size={18} />
-              </button>
-            </div>
+            <button
+              type="button"
+              className={PLAYER_ICON_BUTTON}
+              onClick={onToggleQueue}
+              aria-label={isQueueOpen ? "Close queue" : "Open queue"}
+              aria-pressed={isQueueOpen}
+              title={isQueueOpen ? "Close queue" : "Open queue"}
+            >
+              {isQueueOpen ? <QueuePanelActiveIcon size={20} /> : <QueuePanelIcon size={20} />}
+            </button>
 
             <DownloadButton />
             <PlaybackOptions />
             <VolumeControl />
+
+            {miniPlayerEnabled && hasTrack && (
+              <button
+                type="button"
+                className={`${PLAYER_ICON_BUTTON} ml-1`}
+                onClick={openMiniPlayer}
+                aria-label="Open mini-player"
+                title="Open mini-player"
+              >
+                <MiniPlayerIcon size={20} />
+              </button>
+            )}
           </div>
         </div>
       </div>

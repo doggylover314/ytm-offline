@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
  * around the whole group, not once per bar.
  */
 
-/** The one shape every skeleton here is built from. */
+/** The one shape every skeleton here is built from: a solid step up from the page. */
 function SkeletonBlock({
   className,
   style,
@@ -26,7 +26,7 @@ function SkeletonBlock({
   return (
     <div
       aria-hidden="true"
-      className={cn("animate-pulse rounded-lg bg-foreground/10", className)}
+      className={cn("animate-pulse rounded bg-card", className)}
       style={{ ...style, animationDelay: `${delayMs}ms` }}
     />
   );
@@ -48,11 +48,11 @@ export function TrackRowSkeleton({
   showArtwork?: boolean;
 }) {
   return (
-    <div className="flex h-[52px] w-full items-center gap-3 px-2 py-1.5">
+    <div className="flex h-[52px] w-full items-center gap-4 px-2 py-1.5">
       <div className="flex w-6 shrink-0 justify-end">
         <SkeletonBlock className="h-3 w-4" delayMs={delayMs} />
       </div>
-      {showArtwork && <SkeletonBlock className="size-10 shrink-0" delayMs={delayMs} />}
+      {showArtwork && <SkeletonBlock className="size-10 shrink-0 rounded" delayMs={delayMs} />}
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <SkeletonBlock className="h-3.5 w-[55%]" delayMs={delayMs} />
         <SkeletonBlock className="h-3 w-[32%]" delayMs={delayMs} />
@@ -88,16 +88,17 @@ export function TrackListSkeleton({
 /**
  * One `AlbumCard`'s worth of nothing.
  *
- * `flex w-full flex-col gap-2 p-2` and the artwork's `rounded-none` are `AlbumCard`'s own
- * classes, copied rather than approximated — the card's corners are square, not the rounded
- * guess a generic "image placeholder" would reach for.
+ * `flex w-full flex-col gap-2` and the artwork's 6px `rounded-lg` are `AlbumCard`'s own
+ * classes, copied rather than approximated.
  */
 export function AlbumCardSkeleton({ delayMs = 0 }: { delayMs?: number }) {
   return (
-    <div className="flex w-full flex-col gap-2 p-2">
-      <SkeletonBlock className="aspect-square w-full rounded-none" delayMs={delayMs} />
-      <SkeletonBlock className="h-3.5 w-[78%]" delayMs={delayMs} />
-      <SkeletonBlock className="h-3 w-[48%]" delayMs={delayMs} />
+    <div className="flex w-full flex-col gap-2">
+      <SkeletonBlock className="aspect-square w-full rounded-lg" delayMs={delayMs} />
+      <span className="flex flex-col gap-1.5 py-0.5">
+        <SkeletonBlock className="h-3.5 w-[78%]" delayMs={delayMs} />
+        <SkeletonBlock className="h-3 w-[48%]" delayMs={delayMs} />
+      </span>
     </div>
   );
 }
@@ -112,7 +113,7 @@ export function AlbumGridSkeleton({
 }) {
   return (
     <div
-      className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr))]"
+      className="grid gap-5 [grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr))]"
       role="status"
       aria-label={label}
     >

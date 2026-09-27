@@ -1,17 +1,9 @@
 "use client";
-// beui.dev/components/motion/input
 
-import {
-  AnimatePresence,
-  animate,
-  motion,
-  useReducedMotion,
-} from "motion/react";
+import { CheckIcon } from "@/ui/icons";
 import {
   forwardRef,
-  useEffect,
   useId,
-  useRef,
   useState,
   type InputHTMLAttributes,
   type ReactNode,
@@ -37,7 +29,7 @@ export interface InputProps extends Omit<
   value?: string;
   defaultValue?: string;
   onChange?: (value: string) => void;
-  /** Truthy error triggers a shake, red  and (if a string) a message. */
+  /** Truthy error draws a red edge and (if a string) a message. */
   error?: string | boolean;
   success?: boolean;
   leftIcon?: ReactNode;
@@ -69,7 +61,6 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
 ) {
   const reactId = useId();
   const id = idProp ?? reactId;
-  const reduce = useReducedMotion();
 
   const controlled = valueProp !== undefined;
   const [internal, setInternal] = useState(defaultValue ?? "");
@@ -77,23 +68,11 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
 
   const [focused, setFocused] = useState(false);
 
-  const fieldRef = useRef<HTMLDivElement>(null);
-
   const hasError = Boolean(error);
   const errorMessage = typeof error === "string" ? error : null;
 
   // Right edge shows the success check, otherwise the caller's right icon.
   const rightSlot = success ? null : rightIcon;
-
-  // Shake the field when an error appears.
-  useEffect(() => {
-    if (!fieldRef.current || reduce || !hasError) return;
-    animate(
-      fieldRef.current,
-      { x: [0, -6, 6, -4, 4, -2, 0] },
-      { duration: 0.45 },
-    );
-  }, [hasError, reduce]);
 
   const handleChange = (next: string) => {
     if (!controlled) setInternal(next);
@@ -117,7 +96,6 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
       ) : null}
 
       <div
-        ref={fieldRef}
         data-state={
           hasError
             ? "error"
@@ -128,18 +106,17 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
                 : "idle"
         }
         className={cn(
-          "relative h-11 overflow-hidden rounded-full transition-colors duration-200",
-          "",
-          focused && !hasError && "ring-2 ring-ring/40",
-          hasError && "ring-2 ring-destructive/50",
-          disabled && "opacity-60",
+          "relative h-10 overflow-hidden rounded-[4px] bg-card",
+          focused && !hasError && "shadow-[inset_0_0_0_2px_var(--color-foreground)]",
+          hasError && "shadow-[inset_0_0_0_2px_var(--color-destructive)]",
+          disabled && "opacity-50",
           classNames?.field,
         )}
       >
         {leftIcon ? (
           <span
             className={cn(
-              "pointer-events-none absolute left-3 top-1/2 flex -translate-y-1/2 items-center text-muted-foreground [&_svg]:h-4 [&_svg]:w-4",
+              "pointer-events-none absolute left-3 top-1/2 flex -translate-y-1/2 items-center text-muted-foreground [&_svg]:size-[18px]",
               classNames?.leftIcon,
             )}
           >
@@ -166,39 +143,28 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
             onBlur?.(event);
           }}
           className={cn(
-            "peer h-full w-full bg-transparent text-base leading-6 text-foreground caret-foreground outline-none",
-            "placeholder:text-muted-foreground/60",
-            leftIcon ? "pl-10" : "pl-3.5",
-            rightSlot || success ? "pr-10" : "pr-3.5",
+            "peer h-full w-full bg-transparent text-sm text-foreground caret-foreground outline-none",
+            "placeholder:text-muted-foreground",
+            leftIcon ? "pl-10" : "pl-3",
+            rightSlot || success ? "pr-10" : "pr-3",
             disabled && "cursor-not-allowed",
             classNames?.input,
           )}
         />
 
         {success ? (
-          <motion.svg
-            viewBox="0 0 24 24"
-            fill="none"
+          <CheckIcon
+            size={18}
+            aria-hidden="true"
             className={cn(
-              "absolute right-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-(--color-success)",
+              "absolute right-3 top-1/2 -translate-y-1/2 text-foreground",
               classNames?.successIcon,
             )}
-          >
-            <motion.path
-              d="M5 12.5l4.5 4.5L19 7.5"
-              stroke="currentColor"
-              strokeWidth={2.5}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              initial={reduce ? { pathLength: 1 } : { pathLength: 0 }}
-              animate={{ pathLength: 1 }}
-              transition={{ duration: 0.35, ease: "easeOut" }}
-            />
-          </motion.svg>
+          />
         ) : rightSlot ? (
           <span
             className={cn(
-              "absolute right-3 top-1/2 flex -translate-y-1/2 items-center text-muted-foreground [&_svg]:h-4 [&_svg]:w-4",
+              "absolute right-3 top-1/2 flex -translate-y-1/2 items-center text-muted-foreground [&_svg]:size-[18px]",
               classNames?.rightIcon,
             )}
           >
@@ -207,32 +173,15 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
         ) : null}
       </div>
 
-      <AnimatePresence initial={false}>
-        {errorMessage ? (
-          <motion.p
-            id={`${id}-error`}
-            role="alert"
-            initial={
-              reduce
-                ? { opacity: 0 }
-                : { opacity: 0, y: -4, filter: "blur(4px)" }
-            }
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-            exit={
-              reduce
-                ? { opacity: 0 }
-                : { opacity: 0, y: -4, filter: "blur(4px)" }
-            }
-            transition={{ duration: 0.2 }}
-            className={cn(
-              "px-1 text-xs text-destructive",
-              classNames?.errorMessage,
-            )}
-          >
-            {errorMessage}
-          </motion.p>
-        ) : null}
-      </AnimatePresence>
+      {errorMessage ? (
+        <p
+          id={`${id}-error`}
+          role="alert"
+          className={cn("px-1 text-xs text-destructive", classNames?.errorMessage)}
+        >
+          {errorMessage}
+        </p>
+      ) : null}
     </div>
   );
 });

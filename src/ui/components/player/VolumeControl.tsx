@@ -1,21 +1,14 @@
 import { useEffect, useState } from "react";
-import { RangeSlider } from "@/components/motion/range-slider";
 import { VolumeLoudIcon, VolumeMutedIcon, VolumeSmallIcon } from "@/ui/icons";
 import { playerController, shallowEqual, usePlayerSelector } from "../../../player/playerStore";
-import { FloatingPanel } from "../FloatingPanel";
+import { PLAYER_ICON_BUTTON } from "./playerButton";
 
-/** Scroll step over the icon, matching the old inline slider's wheel behaviour. */
+/** Scroll step over the icon or the bar. */
 const WHEEL_STEP_PERCENT = 5;
 
 /**
- * Volume as a single icon that opens a slider on hover.
- *
- * The bar previously carried a permanently visible 96px slider for a control most people
- * touch rarely. Collapsing it to the icon returns that width to the track title, and the
- * slider is one hover away rather than hidden behind a click.
- *
- * The panel is portalled (see FloatingPanel): the player bar sits inside the window's
- * `overflow-hidden` root, so a panel positioned within the bar would be clipped by it.
+ * Mute toggle plus a short volume bar. The native range input sits invisibly over the drawn
+ * bar, so dragging and arrow keys behave as a slider should. Scrolling over either steps it.
  */
 export function VolumeControl() {
   /* This component writes volume on every pointer move of the slider, so it is the last one
@@ -24,7 +17,6 @@ export function VolumeControl() {
     (state) => ({ volume: state.volume, muted: state.muted }),
     shallowEqual,
   );
-  const [isOpen, setIsOpen] = useState(false);
   const [volume, setVolume] = useState(() => playerController.getVolume());
   const [isMuted, setIsMuted] = useState(() => playerController.isMuted());
 
@@ -57,46 +49,43 @@ export function VolumeControl() {
       : VolumeLoudIcon;
 
   return (
-    <FloatingPanel
-      open={isOpen}
-      onOpenChange={setIsOpen}
-      side="top"
-      openOnHover
-      triggerClassName="shrink-0"
-      className="w-52"
-      trigger={
-        <button
-          type="button"
-          onClick={toggleMute}
-          onWheel={(event) => {
-            const delta = event.deltaY || event.deltaX;
-            if (delta === 0) return;
-            applyVolume(percent + (delta < 0 ? 1 : -1) * WHEEL_STEP_PERCENT);
-          }}
-          aria-label={isMuted ? `Unmute (volume ${percent}%)` : `Mute (volume ${percent}%)`}
-          className="flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-card hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <VolumeGlyph size={18} aria-hidden="true" />
-        </button>
-      }
+    <div
+      className="ml-1 flex shrink-0 items-center gap-1"
+      onWheel={(event) => {
+        const delta = event.deltaY || event.deltaX;
+        if (delta === 0) return;
+        applyVolume(percent + (delta < 0 ? 1 : -1) * WHEEL_STEP_PERCENT);
+      }}
     >
-      <div className="flex flex-col gap-2">
-        <div className="flex items-baseline justify-between gap-3">
-          <span className="text-xs font-medium text-foreground">
-            {isMuted ? "Muted" : "Volume"}
-          </span>
-          <span className="text-xs tabular-nums text-muted-foreground">{percent}%</span>
-        </div>
-        <RangeSlider
-          value={percent}
-          onValueChange={applyVolume}
+      <button
+        type="button"
+        onClick={toggleMute}
+        aria-label={isMuted ? `Unmute (volume ${percent}%)` : `Mute (volume ${percent}%)`}
+        title={isMuted ? "Unmute" : "Mute"}
+        className={PLAYER_ICON_BUTTON}
+      >
+        <VolumeGlyph size={20} aria-hidden="true" />
+      </button>
+
+      <div className="relative h-1 w-[88px]">
+        <input
+          type="range"
           min={0}
           max={100}
           step={1}
-          showTicks={false}
+          value={percent}
+          onChange={(event) => applyVolume(Number(event.currentTarget.value))}
           aria-label="Volume"
+          aria-valuetext={isMuted ? "Muted" : `${percent}%`}
+          className="peer absolute inset-x-0 top-1/2 z-10 m-0 h-4 w-full -translate-y-1/2 cursor-pointer appearance-none bg-transparent opacity-0 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-px [&::-moz-range-thumb]:border-0 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-px [&::-webkit-slider-thumb]:appearance-none"
         />
+        <div
+          className="h-full w-full overflow-hidden rounded-[1px] bg-border peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ring"
+          aria-hidden="true"
+        >
+          <div className="h-full rounded-[1px] bg-foreground" style={{ width: `${percent}%` }} />
+        </div>
       </div>
-    </FloatingPanel>
+    </div>
   );
 }

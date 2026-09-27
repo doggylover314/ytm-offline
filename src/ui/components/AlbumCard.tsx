@@ -1,6 +1,5 @@
 import { memo, useCallback, useRef, type MouseEvent, type ReactNode } from "react";
-import { TiltCard } from "@/components/motion/tilt-card";
-import { PlayActiveIcon } from "@/ui/icons";
+import { DownloadActiveIcon, HeartActiveIcon } from "@/ui/icons";
 import { propsEqualIgnoringHandlers } from "../../internal/propsEqual";
 import { TrackArtwork } from "./TrackArtwork";
 
@@ -21,6 +20,12 @@ interface AlbumCardProps {
   subtitleContent?: ReactNode;
   /** Override when the card is laid out at a materially different width. */
   size?: number;
+  /** Which placeholder glyph the artwork falls back to. */
+  variant?: "album" | "playlist" | "artist";
+  /** Liked Songs: a filled heart on a plain square instead of cover art. */
+  liked?: boolean;
+  /** Kept on this machine: a small filled download glyph leads the subtitle. */
+  saved?: boolean;
   onClick?: () => void;
   onContextMenu?: (event: MouseEvent<HTMLDivElement>) => void;
 }
@@ -36,12 +41,15 @@ interface AlbumCardProps {
  * is unchanged.
  */
 export const AlbumCard = memo(function AlbumCard({
-  color = "#333333",
+  color = "#1E1E1E",
   artworkUrl,
   title,
   subtitle,
   subtitleContent,
   size = DEFAULT_CARD_SIZE,
+  variant = "album",
+  liked = false,
+  saved = false,
   onClick,
   onContextMenu,
 }: AlbumCardProps) {
@@ -62,46 +70,51 @@ export const AlbumCard = memo(function AlbumCard({
       /*
        * Off-screen cards skip style, layout and paint — the same treatment `TrackRow` gets,
        * and for the same reason: these grids are not windowed, so a library page really does
-       * build every card it has loaded. A card is heavier than a row (artwork, tilt wrapper,
-       * hover overlay), which makes it the better candidate, not the worse one.
+       * build every card it has loaded.
        *
-       * `auto 232px` is a square cover at the ~176px grid column plus the two label lines. The
+       * `auto 222px` is a square cover at the ~176px grid column plus the two label lines. The
        * `auto` keyword means the guess only ever applies to a card that has not yet been on
        * screen once; after that the browser uses the size it actually measured.
        */
-      className="group/card flex w-full cursor-pointer flex-col gap-2  p-2 transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [content-visibility:auto] [contain-intrinsic-size:auto_232px]"
+      className="group/card flex w-full min-w-0 cursor-pointer flex-col gap-2 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [content-visibility:auto] [contain-intrinsic-size:auto_222px]"
       onClick={handleClick}
       onContextMenu={handleContextMenu}
       onKeyDown={handleKeyDown}
       role="button"
       tabIndex={0}
     >
-      <TiltCard max={9} className="aspect-square w-full overflow-hidden rounded-none">
-        <div className="relative size-full" style={{ backgroundColor: color }}>
+      {liked ? (
+        <span className="grid aspect-square w-full place-items-center rounded-lg bg-muted text-foreground">
+          <HeartActiveIcon size={40} aria-hidden="true" />
+        </span>
+      ) : (
+        <div className="relative aspect-square w-full overflow-hidden rounded-lg" style={{ backgroundColor: color }}>
           <TrackArtwork
             className="size-full object-cover"
             artworkUrl={artworkUrl}
             iconSize={48}
             size={size}
-            variant="album"
+            variant={variant}
           />
-          {/* Play affordance fades in on hover rather than sitting permanently on the art. */}
-          <div className="pointer-events-none absolute inset-0 grid place-items-center bg-background/50 opacity-0 transition-opacity group-hover/card:opacity-100">
-            <span className="grid size-12 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg">
-              <PlayActiveIcon size={26} />
-            </span>
-          </div>
         </div>
-      </TiltCard>
+      )}
 
-      {title && (
-        <span className="line-clamp-2 text-sm font-medium text-foreground">{title}</span>
-      )}
-      {(subtitleContent || subtitle) && (
-        <span className="line-clamp-1 text-xs text-muted-foreground">
-          {subtitleContent ?? subtitle}
-        </span>
-      )}
+      <span className="flex min-w-0 flex-col gap-0.5">
+        {title && (
+          <span className="truncate text-sm font-semibold text-foreground">{title}</span>
+        )}
+        {(subtitleContent || subtitle || saved) && (
+          <span className="flex min-w-0 items-center gap-1.5 text-[13px] text-muted-foreground">
+            {saved && (
+              <>
+                <DownloadActiveIcon size={14} className="shrink-0" aria-hidden="true" />
+                <span className="sr-only">Downloaded.</span>
+              </>
+            )}
+            <span className="truncate">{subtitleContent ?? subtitle}</span>
+          </span>
+        )}
+      </span>
     </div>
   );
 }, propsEqualIgnoringHandlers);

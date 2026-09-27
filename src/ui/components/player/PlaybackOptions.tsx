@@ -5,6 +5,7 @@ import { ClockIcon, SpeedIcon } from "@/ui/icons";
 import { playerController } from "../../../player/playerStore";
 import { FloatingPanel } from "../FloatingPanel";
 import { MiniEqualizer } from "./MiniEqualizer";
+import { PLAYER_ICON_BUTTON } from "./playerButton";
 import { isEqualizerFlat, useEqualizer, useEqualizerEnabled } from "../../settings/equalizer";
 
 /** Offered speeds. Wider than a podcast app needs, narrow enough to stay a single row. */
@@ -79,20 +80,21 @@ export function PlaybackOptions() {
             aria-expanded={isOpen}
             aria-label="Playback options"
             className={cn(
-              "flex h-8 items-center justify-center gap-1 rounded-full px-2 text-muted-foreground transition-colors",
-              "hover:bg-card hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              (isSleeping || rate !== 1 || equalizerActive) && "text-primary",
+              PLAYER_ICON_BUTTON,
+              "w-auto min-w-9 gap-1 px-2",
+              // Something here is changing playback, so the control reads as switched on.
+              (isSleeping || rate !== 1 || equalizerActive) && "bg-muted hover:bg-border",
             )}
           >
             {isSleeping ? (
               <>
-                <ClockIcon size={17} aria-hidden="true" />
+                <ClockIcon size={18} aria-hidden="true" />
                 <span className="text-[11px] tabular-nums">{formatCountdown(remainingMs)}</span>
               </>
             ) : rate !== 1 ? (
               <span className="text-[11px] font-semibold tabular-nums">{rate}&times;</span>
             ) : (
-              <SpeedIcon size={17} aria-hidden="true" />
+              <SpeedIcon size={20} aria-hidden="true" />
             )}
           </button>
         </Tooltip>
@@ -101,7 +103,7 @@ export function PlaybackOptions() {
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-1.5">
           <span className="text-xs font-medium text-foreground">Playback speed</span>
-          <div className="flex rounded-lg bg-card p-0.5" role="radiogroup" aria-label="Playback speed">
+          <div className="flex gap-0.5" role="radiogroup" aria-label="Playback speed">
             {SPEEDS.map((value) => (
               <button
                 key={value}
@@ -110,11 +112,11 @@ export function PlaybackOptions() {
                 aria-checked={rate === value}
                 onClick={() => applyRate(value)}
                 className={cn(
-                  "flex-1 rounded-md px-1 py-1 text-[11px] font-medium tabular-nums transition-colors",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                  "h-7 flex-1 rounded px-1 text-xs font-medium tabular-nums transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   rate === value
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground",
+                    ? "bg-foreground text-background"
+                    : "bg-muted text-foreground hover:bg-border",
                 )}
               >
                 {value}&times;
@@ -127,7 +129,7 @@ export function PlaybackOptions() {
           <div className="flex items-baseline justify-between gap-2">
             <span className="text-xs font-medium text-foreground">Sleep timer</span>
             {isSleeping && (
-              <span className="text-xs tabular-nums text-primary">
+              <span className="text-xs tabular-nums text-muted-foreground">
                 {formatCountdown(remainingMs)} left
               </span>
             )}
@@ -138,7 +140,7 @@ export function PlaybackOptions() {
                 key={minutes}
                 type="button"
                 onClick={() => applySleep(minutes)}
-                className="rounded-full bg-card px-2.5 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="h-7 rounded bg-muted px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 {minutes} min
               </button>
@@ -147,7 +149,7 @@ export function PlaybackOptions() {
               <button
                 type="button"
                 onClick={() => applySleep(null)}
-                className="rounded-full px-2.5 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="h-7 rounded px-2.5 text-xs font-medium text-destructive transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Cancel
               </button>

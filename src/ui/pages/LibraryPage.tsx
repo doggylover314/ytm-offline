@@ -1,4 +1,5 @@
 import {
+  type FormEvent,
   useCallback,
   useId,
   useMemo,
@@ -8,9 +9,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
 } from "react";
-import { motion } from "motion/react";
 import { cn } from "@/lib/utils";
-import { CloseIcon, EyeClosedIcon, EyeIcon, SearchIcon } from "@/ui/icons";
+import { CloseIcon, EyeClosedIcon, EyeIcon, PlusIcon, SearchIcon } from "@/ui/icons";
 import {
   Select,
   SelectContent,
@@ -20,32 +20,36 @@ import {
 } from "@/components/motion/select";
 import type { Album, Artist, Playlist, Track } from "../../datasource/types";
 import type { LibraryState } from "../../player/LibraryController";
-import type { PlayerControllerActions } from "../../player/playerStore";
+import { libraryController, type PlayerControllerActions } from "../../player/playerStore";
 import { queueDownloads } from "../../player/offlineStore";
+import { useSyncedPlaylists } from "../../player/playlistSync";
+import { logInternalError } from "../../internal/logging";
 import { getLocalPlaylistItems, subscribeToLocalPlaylists } from "../../player/localPlaylists";
 import { AlbumCard } from "../components/AlbumCard";
 import { SelectionBar } from "../components/SelectionBar";
-import { TrackArtwork } from "../components/TrackArtwork";
 import { TrackRow } from "../components/TrackRow";
 import { useTrackContextMenu } from "../components/TrackContextMenu";
 import { usePlaylistContextMenu } from "../components/PlaylistContextMenu";
 import { useNowPlaying } from "../hooks/useNowPlaying";
 import { useTrackSelection } from "../hooks/useTrackSelection";
-import { isLikedSongsId, likedSongsCover } from "../likedSongsArtwork";
+import { isLikedSongsId } from "../likedSongsArtwork";
 import { useHiddenPlaylistIds } from "../settings/hiddenPlaylists";
 
 type LibraryTab = "songs" | "albums" | "artists" | "playlists";
 
 const TABS: Array<{ value: LibraryTab; label: string }> = [
-  { value: "songs", label: "Songs" },
+  { value: "playlists", label: "Playlists" },
   { value: "albums", label: "Albums" },
   { value: "artists", label: "Artists" },
-  { value: "playlists", label: "Playlists" },
+  { value: "songs", label: "Songs" },
 ];
 
-/* Roomier than the old 9rem: at that width a two-line title and an artist filled the card
-   entirely, which is what made the grids read as dense rather than browsable. */
-const GRID = "grid gap-5 [grid-template-columns:repeat(auto-fill,minmax(11rem,1fr))]";
+const GRID = "grid grid-cols-6 gap-6";
+
+/** Rectangular filter chip; the selected one inverts. */
+const CHIP = "h-8 rounded px-3 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+const SECONDARY_BUTTON = "flex h-9 shrink-0 items-center gap-1.5 rounded bg-muted px-4 text-sm font-medium text-foreground transition-colors hover:bg-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 
 /** "recent" is YouTube's own order, which is newest-first — so it sorts by doing nothing. */
 type LibrarySort = "recent" | "title" | "artist";
@@ -99,11 +103,7 @@ function EmptyState({
         {query ? `No ${noun} match "${query}".` : `No ${noun} in your library yet.`}
       </p>
       {query && (
-        <button
-          type="button"
-          onClick={onClearQuery}
-          className="rounded-full bg-card px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
+        <button type="button" onClick={onClearQuery} className={SECONDARY_BUTTON}>
           Clear filter
         </button>
       )}
@@ -132,12 +132,13 @@ export function LibraryPage({
   onOpenArtist: (artist: Artist) => void;
   onOpenPlaylist: (playlist: Playlist) => void;
 }) {
-  const [tab, setTab] = useState<LibraryTab>("songs");
+  const [tab, setTab] = useState<LibraryTab>("playlists");
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<LibrarySort>("recent");
   const { currentTrackId, isPlaying } = useNowPlaying();
   const { openTrackMenu, openPlaylistPicker } = useTrackContextMenu();
   const { openPlaylistMenu, openAlbumMenu } = usePlaylistContextMenu();
+  const syncedPlaylists = useSyncedPlaylists();
 
   /*
    * Subscribed, not read once. `getLocalPlaylistItems()` was called inside the playlists memo
@@ -279,6 +280,34 @@ export function LibraryPage({
     selection.clear();
   }, [selection]);
 
+  /** Null while the name field is closed. */
+  const [newPlaylistName, setNewPlaylistName] = useState<string | null>(null);
+  const [isCreatingPlaylist, setIsCreatingPlaylist] = useState(false);
+  const [createPlaylistError, setCreatePlaylistError] = useState<string | null>(null);
+
+  const closeNewPlaylist = () => {
+    setNewPlaylistName(null);
+    setCreatePlaylistError(null);
+  };
+
+  const createPlaylist = async (event: FormEvent) => {
+    event.preventDefault();
+    const title = newPlaylistName?.trim();
+    if (!title || isCreatingPlaylist) return;
+    setIsCreatingPlaylist(true);
+    setCreatePlaylistError(null);
+    try {
+      await libraryController.createPlaylist(title);
+      closeNewPlaylist();
+      selectTab("playlists");
+    } catch (error) {
+      logInternalError("LibraryPage.createPlaylist failed", error);
+      setCreatePlaylistError(error instanceof Error ? error.message : "Could not create the playlist.");
+    } finally {
+      setIsCreatingPlaylist(false);
+    }
+  };
+
   /** Arrow keys move within the tablist and wrap; Home and End jump to the ends. */
   const onTabKeyDown = useCallback((event: ReactKeyboardEvent, index: number) => {
     const last = TABS.length - 1;
@@ -323,22 +352,53 @@ export function LibraryPage({
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-col gap-5 pb-1">
-        <h1 className="text-4xl font-bold tracking-[-0.03em] text-foreground">Library</h1>
+    <div className="flex flex-col gap-6 pt-1">
+      <header className="flex flex-col gap-6">
+        <div className="flex items-center justify-between gap-4">
+          <h1 className="text-[32px] font-semibold text-foreground">Library</h1>
+          {newPlaylistName === null ? (
+            <button type="button" onClick={() => setNewPlaylistName("")} className={cn(SECONDARY_BUTTON, "pl-3")}>
+              <PlusIcon size={18} aria-hidden="true" />
+              New playlist
+            </button>
+          ) : (
+            <form className="flex items-center gap-2" onSubmit={(event) => void createPlaylist(event)}>
+              {createPlaylistError && (
+                <span className="max-w-64 truncate text-[13px] text-destructive" role="alert">
+                  {createPlaylistError}
+                </span>
+              )}
+              <input
+                autoFocus
+                value={newPlaylistName}
+                onChange={(event) => setNewPlaylistName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") closeNewPlaylist();
+                }}
+                placeholder="Playlist name"
+                aria-label="New playlist name"
+                className="h-9 w-56 rounded bg-card px-3 text-sm text-foreground placeholder:text-muted-foreground focus:shadow-[inset_0_0_0_2px_var(--color-foreground)]"
+              />
+              <button
+                type="submit"
+                disabled={!newPlaylistName.trim() || isCreatingPlaylist}
+                className="h-9 rounded bg-foreground px-4 text-sm font-medium text-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              >
+                {isCreatingPlaylist ? "Creating…" : "Create"}
+              </button>
+              <button
+                type="button"
+                onClick={closeNewPlaylist}
+                className="h-9 rounded px-4 text-sm font-medium text-foreground transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Cancel
+              </button>
+            </form>
+          )}
+        </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {/*
-            One track with a sliding indicator rather than four loose pills: the group reads as a
-            single control, and the indicator carries the eye between sections instead of two
-            buttons swapping colour. Roving tabindex is kept — the animation is presentation,
-            the keyboard model is not.
-          */}
-          <div
-            className="flex shrink-0 gap-1 rounded-full bg-card/70 p-1"
-            role="tablist"
-            aria-label="Library section"
-          >
+          <div className="flex shrink-0 gap-2" role="tablist" aria-label="Library section">
             {TABS.map((item, index) => {
               const active = tab === item.value;
               return (
@@ -356,18 +416,10 @@ export function LibraryPage({
                   onKeyDown={(event) => onTabKeyDown(event, index)}
                   onClick={() => selectTab(item.value)}
                   className={cn(
-                    "relative isolate rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    active ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                    CHIP,
+                    active ? "bg-foreground text-background" : "bg-card text-foreground hover:bg-muted",
                   )}
                 >
-                  {active && (
-                    <motion.span
-                      layoutId={`${tabsId}-indicator`}
-                      className="absolute inset-0 -z-10 rounded-full bg-primary"
-                      transition={{ type: "spring", stiffness: 320, damping: 32 }}
-                    />
-                  )}
                   {item.label}
                   <span className="ml-1.5 tabular-nums opacity-60">{counts[item.value]}</span>
                 </button>
@@ -376,21 +428,21 @@ export function LibraryPage({
           </div>
 
           <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2">
-            <label className="flex min-w-0 flex-1 items-center gap-2 rounded-full bg-card/70 px-3.5 py-2 text-muted-foreground transition-colors focus-within:bg-card focus-within:ring-2 focus-within:ring-inset focus-within:ring-ring sm:max-w-72">
+            <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded bg-card px-3 text-muted-foreground focus-within:shadow-[inset_0_0_0_2px_var(--color-foreground)] sm:max-w-72">
               <SearchIcon size={16} aria-hidden="true" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={`Filter ${tab}`}
                 aria-label="Filter library"
-                className="w-full min-w-0 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                className="w-full min-w-0 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
               />
               {isFiltering && (
                 <button
                   type="button"
                   onClick={() => setQuery("")}
                   aria-label="Clear filter"
-                  className="shrink-0 rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="shrink-0 rounded text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <CloseIcon size={14} />
                 </button>
@@ -428,7 +480,7 @@ export function LibraryPage({
               A list this long is scanned by column, and unlabelled columns are read twice.
             */}
             <div
-              className="flex items-center gap-3 px-2 pb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground"
+              className="flex items-center gap-3 px-2 pb-2 text-xs font-medium text-muted-foreground"
               aria-hidden="true"
             >
               <span className="w-6 text-right">#</span>
@@ -470,7 +522,8 @@ export function LibraryPage({
             {albums.map((album) => (
               <AlbumCard
                 key={album.id}
-                artworkUrl={isLikedSongsId(album.id) ? likedSongsCover : album.artworkUrl}
+                artworkUrl={album.artworkUrl}
+                liked={isLikedSongsId(album.id)}
                 title={album.title}
                 subtitle={album.artist}
                 onClick={() => onOpenAlbum(album)}
@@ -487,26 +540,14 @@ export function LibraryPage({
         ) : (
           <div className={GRID}>
             {artists.map((artist) => (
-              <button
+              <AlbumCard
                 key={artist.id}
-                type="button"
+                artworkUrl={artist.artworkUrl}
+                variant="artist"
+                title={artist.name}
+                subtitle="Artist"
                 onClick={() => onOpenArtist(artist)}
-                className="group/artist flex flex-col items-center gap-3 rounded-2xl bg-card/50 p-4 text-center transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <TrackArtwork
-                  className="size-24 rounded-full transition-transform duration-200 group-hover/artist:scale-[1.04]"
-                  size={96}
-                  artworkUrl={artist.artworkUrl}
-                  iconSize={28}
-                  variant="artist"
-                />
-                <span className="flex min-w-0 flex-col gap-0.5">
-                  <span className="line-clamp-2 text-sm font-medium text-foreground">
-                    {artist.name}
-                  </span>
-                  <span className="text-xs text-muted-foreground">Artist</span>
-                </span>
-              </button>
+              />
             ))}
           </div>
         )
@@ -521,7 +562,7 @@ export function LibraryPage({
               <button
                 type="button"
                 onClick={() => setShowHiddenPlaylists((current) => !current)}
-                className="flex w-fit items-center gap-1.5 rounded-full bg-card/70 px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className={cn(CHIP, "flex w-fit items-center gap-1.5 bg-card text-foreground hover:bg-muted")}
               >
                 {showHiddenPlaylists ? <EyeClosedIcon size={14} /> : <EyeIcon size={14} />}
                 {showHiddenPlaylists ? "Hide the hidden playlists" : `Show ${hiddenPlaylistCount} hidden`}
@@ -539,11 +580,10 @@ export function LibraryPage({
                     className={hiddenPlaylistIdSet.has(playlist.id) ? "opacity-40" : undefined}
                   >
                     <AlbumCard
-                      artworkUrl={
-                        isLikedSongsId(playlist.id, playlist.kind)
-                          ? likedSongsCover
-                          : playlist.artworkUrl
-                      }
+                      artworkUrl={playlist.artworkUrl}
+                      variant="playlist"
+                      liked={isLikedSongsId(playlist.id, playlist.kind)}
+                      saved={Boolean(syncedPlaylists[playlist.id])}
                       title={playlist.title}
                       subtitle={playlist.owner}
                       onClick={() => onOpenPlaylist(playlist)}

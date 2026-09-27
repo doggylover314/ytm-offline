@@ -1,7 +1,7 @@
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { SpinnerSteps } from "@/components/motion/loader";
-import { CheckIcon, CopyIcon, UserPlusIcon } from "@/ui/icons";
+import { cn } from "@/lib/utils";
+import { CheckIcon, CopyIcon } from "@/ui/icons";
 import {
   Select,
   SelectContent,
@@ -22,7 +22,7 @@ import type { PlayerControllerActions } from "../../player/playerStore";
 import { shuffleTracks } from "../../player/shuffleTracks";
 import { AlbumCard } from "../components/AlbumCard";
 import { ArtistLinks } from "../components/ArtistLinks";
-import { MediaHeader } from "../components/MediaHeader";
+import { HEADER_SECONDARY_BUTTON, MediaHeader } from "../components/MediaHeader";
 import { AlbumGridSkeleton, TrackListSkeleton } from "../components/Skeleton";
 import { TrackArtwork } from "../components/TrackArtwork";
 import { TrackRow } from "../components/TrackRow";
@@ -54,8 +54,11 @@ function getArtistUrl(artist: Artist): string {
   return `https://music.youtube.com/search?q=${encodeURIComponent(artist.name)}`;
 }
 
-/** How many of the artist's songs the Popular shelf shows before it is expanded. */
+/** How many of the artist's songs the Top songs shelf shows before it is expanded. */
 const POPULAR_PREVIEW_COUNT = 6;
+
+/** Top songs and releases side by side once there is room, stacked below that. */
+const SONGS_AND_RELEASES = "grid items-start gap-12 xl:grid-cols-[minmax(0,1fr)_420px]";
 
 /*
  * Last-resolved page per artist, for this session only.
@@ -163,7 +166,6 @@ export function ArtistView({
       .filter((type) => type === "all" || releaseTypes.has(type)),
     [releaseTypes],
   );
-  const activeFilterIndex = Math.max(0, releaseFilters.indexOf(filter));
   const visibleReleases = page?.releases.filter(
     (release) => filter === "all" || release.releaseType === filter,
   ) ?? [];
@@ -287,7 +289,7 @@ export function ArtistView({
   };
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-7">
       <MediaHeader
         eyebrow="Artist"
         title={
@@ -306,10 +308,8 @@ export function ArtistView({
           </button>
         }
         meta={displayedArtist.subscriberCount}
-        circularArtwork
-        /* Supplied even though artworkSlot draws the image: MediaHeader publishes this to
-           the ambient store, which is what tints the chrome above the page. */
         artworkUrl={displayedArtist.artworkUrl}
+        artworkSize={160}
         /*
          * The same component every other cover in the app uses. Its own ladder ends by
          * refetching the image through Tauri and painting the bytes, which is what rescues a
@@ -324,10 +324,10 @@ export function ArtistView({
          */
         artworkSlot={
           <TrackArtwork
-            className="size-44 shrink-0 rounded-full bg-card shadow-2xl ring-1 ring-white/10"
-            size={176}
+            className="size-40 shrink-0 rounded-lg"
+            size={160}
             artworkUrl={displayedArtist.artworkUrl}
-            iconSize={72}
+            iconSize={64}
             variant="artist"
             loading="eager"
             preferProxy
@@ -348,18 +348,11 @@ export function ArtistView({
         actions={
           <div className="flex items-center gap-2">
             <button
-              className="flex items-center gap-2 rounded-full bg-card px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className={cn(HEADER_SECONDARY_BUTTON, "px-4")}
               type="button"
               disabled={isLoading || Boolean(error) || isSubscribing}
               onClick={() => void toggleArtistSubscription()}
             >
-              {isSubscribing ? (
-                <SpinnerSteps size={18} color="currentColor" />
-              ) : isSubscribed ? (
-                <CheckIcon size={18} />
-              ) : (
-                <UserPlusIcon size={18} />
-              )}
               <span>
                 {isSubscribing
                   ? isSubscribed ? "Unsubscribing..." : "Subscribing..."
@@ -400,19 +393,19 @@ export function ArtistView({
        * arrives, so there is nothing honest to render there yet.
        */}
       {isLoading && (
-        <div className="flex flex-col gap-8">
+        <div className={SONGS_AND_RELEASES}>
           <section className="flex flex-col gap-3">
-            <h2>Popular</h2>
+            <h2>Top songs</h2>
             <TrackListSkeleton count={POPULAR_PREVIEW_COUNT} label="Loading top songs" />
           </section>
           {/*
-            Releases has no fixed preview count — unlike Popular, every release the artist has
-            is shown. `AlbumGridSkeleton`'s own default is what "Listen again"/"More
+            Releases has no fixed preview count — unlike Top songs, every release the artist
+            has is shown. `AlbumGridSkeleton`'s own default is what "Listen again"/"More
             recommendations" on Home use for the same reason: a guess at one row, not a real
             number to match.
           */}
           <section className="flex flex-col gap-3">
-            <h2>Releases</h2>
+            <h2>Albums</h2>
             <AlbumGridSkeleton label="Loading releases" />
           </section>
         </div>
@@ -421,110 +414,112 @@ export function ArtistView({
 
       {!isLoading && !error && page && (
         <>
-          {popularSongs.length > 0 && (
-            <section className="flex flex-col gap-3">
-              <h2>Popular</h2>
-              <div className="flex flex-col gap-0.5">
-                {popularSongs.map((track, index) => (
-                  <TrackRow
-                    key={track.id}
-                    track={track}
-                    index={index}
-                    showAlbum
-                    isCurrent={currentTrackId !== null && track.id === currentTrackId}
-                    isPlaying={isPlaying && track.id === currentTrackId}
-                    suppressArtistId={displayedArtist.id}
-                    trailing={
-                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                        {compactViews(track)}
-                      </span>
-                    }
-                    onSelect={() => void playerController.playTrackById(track.id, page.allSongs)}
-                    showDownload
-
-                    showRating
-                    onQuickAddToQueue={() => playerController.addToQueue(track)}
-                    onQuickAdd={() => openPlaylistPicker(track)}
-                    onContextMenu={(event) => openTrackMenu(event, track)}
-                  />
-                ))}
-              </div>
-              {(hiddenSongCount > 0 || showAllSongs) && (
-                <button
-                  type="button"
-                  onClick={() => setShowAllSongs((current) => !current)}
-                  aria-expanded={showAllSongs}
-                  className="self-start rounded-full bg-white/[0.04] px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-white/[0.08] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  {showAllSongs ? "Show less" : `Show all ${allSongs.length} songs`}
-                </button>
+          {(popularSongs.length > 0 || page.releases.length > 0) && (
+            <div className={SONGS_AND_RELEASES}>
+              {popularSongs.length > 0 && (
+                <section className="flex min-w-0 flex-col gap-3">
+                  <h2>Top songs</h2>
+                  <div className="flex flex-col gap-0.5">
+                    {popularSongs.map((track, index) => {
+                      const views = compactViews(track);
+                      return (
+                        <TrackRow
+                          key={track.id}
+                          track={track}
+                          index={index}
+                          isCurrent={currentTrackId !== null && track.id === currentTrackId}
+                          isPlaying={isPlaying && track.id === currentTrackId}
+                          suppressArtistId={displayedArtist.id}
+                          detail={views ? `${views} plays` : undefined}
+                          onSelect={() => void playerController.playTrackById(track.id, page.allSongs)}
+                          showDownload
+                          showDuration
+                          showRating
+                          onQuickAddToQueue={() => playerController.addToQueue(track)}
+                          onQuickAdd={() => openPlaylistPicker(track)}
+                          onContextMenu={(event) => openTrackMenu(event, track)}
+                        />
+                      );
+                    })}
+                  </div>
+                  {(hiddenSongCount > 0 || showAllSongs) && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllSongs((current) => !current)}
+                      aria-expanded={showAllSongs}
+                      className="h-9 self-start rounded bg-muted px-4 text-sm font-medium text-foreground transition-colors hover:bg-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {showAllSongs ? "Show less" : `Show all ${allSongs.length} songs`}
+                    </button>
+                  )}
+                </section>
               )}
-            </section>
-          )}
 
-          {page.releases.length > 0 && (
-            <section className="flex flex-col gap-3">
-              <div className="flex items-center justify-between gap-3">
-                <h2>Releases</h2>
-                <div
-                  className="flex flex-wrap items-center gap-1.5 self-start [&>button]:flex [&>button]:min-h-8 [&>button]:min-w-0 [&>button]:items-center [&>button]:justify-center [&>button]:gap-1.5 [&>button]:rounded-full [&>button]:bg-white/[0.04] [&>button]:px-3 [&>button]:text-sm [&>button]:font-medium [&>button]:text-muted-foreground [&>button]:transition-colors hover:[&>button]:bg-white/[0.08] hover:[&>button]:text-foreground focus-visible:[&>button]:outline-none focus-visible:[&>button]:ring-2 focus-visible:[&>button]:ring-ring"
-                  role="group"
-                  aria-label="Release type"
-                  style={{
-                    "--active-filter-offset": `${activeFilterIndex * 100}%`,
-                    "--filter-count": releaseFilters.length,
-                  } as CSSProperties}
-                >
-                  {releaseFilters
-                    .map((type) => (
-                      <button
-                        key={type}
-                        type="button"
-                        className={filter === type ? "bg-primary/15 text-foreground" : ""}
-                        aria-pressed={filter === type}
-                        onClick={() => setFilter(type)}
-                      >
-                        {type === "all"
-                          ? "All"
-                          : type === "ep"
-                            ? "EPs"
-                            : `${type[0].toUpperCase()}${type.slice(1)}s`}
-                      </button>
-                    ))}
-                </div>
-              </div>
-              <div key={filter} className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr))] grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr))]">
-                {visibleReleases.map((release) => {
-                  const hasLinkedArtists = Boolean(release.artists?.length);
-                  return (
-                    <div key={release.id} className="">
-                      <AlbumCard
-                        artworkUrl={release.artworkUrl}
-                        title={release.title}
-                        subtitle={hasLinkedArtists ? undefined : release.artist}
-                        subtitleContent={hasLinkedArtists
-                          ? (
-                              <ArtistLinks
-                                artists={release.artists}
-                                fallback={release.artist}
-                                suppressArtistId={displayedArtist.id}
-                              />
-                            )
-                          : undefined}
-                        onClick={() => onOpenAlbum(release)}
-                        onContextMenu={(event) => openAlbumMenu(event, release)}
-                      />
+              {page.releases.length > 0 && (
+                <section className="flex min-w-0 flex-col gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <h2>Albums</h2>
+                    <div
+                      className="flex flex-wrap items-center gap-2"
+                      role="group"
+                      aria-label="Release type"
+                    >
+                      {releaseFilters
+                        .map((type) => (
+                          <button
+                            key={type}
+                            type="button"
+                            className={cn(
+                              "flex h-8 items-center rounded px-3 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                              filter === type
+                                ? "bg-foreground text-background"
+                                : "bg-card text-foreground hover:bg-muted",
+                            )}
+                            aria-pressed={filter === type}
+                            onClick={() => setFilter(type)}
+                          >
+                            {type === "all"
+                              ? "All"
+                              : type === "ep"
+                                ? "EPs"
+                                : `${type[0].toUpperCase()}${type.slice(1)}s`}
+                          </button>
+                        ))}
                     </div>
-                  );
-                })}
-              </div>
-            </section>
+                  </div>
+                  <div key={filter} className="grid gap-5 [grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr))] xl:grid-cols-2">
+                    {visibleReleases.map((release) => {
+                      const hasLinkedArtists = Boolean(release.artists?.length);
+                      return (
+                        <AlbumCard
+                          key={release.id}
+                          artworkUrl={release.artworkUrl}
+                          title={release.title}
+                          subtitle={hasLinkedArtists ? undefined : release.artist}
+                          subtitleContent={hasLinkedArtists
+                            ? (
+                                <ArtistLinks
+                                  artists={release.artists}
+                                  fallback={release.artist}
+                                  suppressArtistId={displayedArtist.id}
+                                />
+                              )
+                            : undefined}
+                          onClick={() => onOpenAlbum(release)}
+                          onContextMenu={(event) => openAlbumMenu(event, release)}
+                        />
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+            </div>
           )}
 
           {page.playlists.length > 0 && (
             <section className="flex flex-col gap-3">
               <h2>Playlists</h2>
-              <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr))]">
+              <div className="grid gap-5 [grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr))]">
                 {page.playlists.map((playlist) => (
                   <AlbumCard
                     key={playlist.id}
@@ -541,7 +536,7 @@ export function ArtistView({
         </>
       )}
       {toast && createPortal(
-        <div className="fixed bottom-28 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-2 rounded-full bg-popover/95 px-4 py-2 text-sm text-foreground shadow-2xl backdrop-blur" role="status">
+        <div className="fixed bottom-28 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-3 rounded-lg bg-foreground px-4 py-3 text-sm text-background" role="status">
           {toast === "Url copied to clipboard" && (
             <CheckIcon size={18} aria-hidden="true" />
           )}

@@ -45,19 +45,17 @@ export function RelatedPage({
   }, [track]);
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-8 pt-1">
       <header className="flex items-center gap-4">
         <TrackArtwork
-          className="size-16 shrink-0 rounded-xl object-cover"
+          className="size-16 shrink-0 rounded-lg bg-card object-cover"
           size={64}
           artworkUrl={track.artworkUrl}
         />
         <div className="flex min-w-0 flex-col gap-0.5">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Related to
-          </span>
+          <span className="text-[13px] font-medium text-muted-foreground">Related to</span>
           <h1 className="truncate text-2xl font-semibold text-foreground">{track.title}</h1>
-          <span className="truncate text-sm text-muted-foreground">{track.artist}</span>
+          <span className="truncate text-[13px] text-muted-foreground">{track.artist}</span>
         </div>
       </header>
 

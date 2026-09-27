@@ -41,14 +41,13 @@ export function ReleaseNoteDialog({ version, onDismiss }: ReleaseNoteDialogProps
     <AnimatePresence>
       {version ? (
         <motion.div
-          /* Rounded to the window: a square scrim over a rounded window paints past the
-             corner cutout. The variable is 0 when maximized, so it follows the window. */
-          className="fixed inset-0 z-[200] flex items-center justify-center overflow-hidden rounded-[var(--window-radius)] bg-background/70 p-6 backdrop-blur-sm"
+          /* No scrim: the design has no translucent surfaces. This layer only catches clicks. */
+          className="fixed inset-0 z-[200] flex items-center justify-center p-6"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
-          /* The scrim dismisses too — this is an announcement, not a decision. */
+          /* Clicking outside dismisses too — this is an announcement, not a decision. */
           onPointerDown={(event) => {
             if (event.target === event.currentTarget) onDismiss();
           }}
@@ -57,16 +56,14 @@ export function ReleaseNoteDialog({ version, onDismiss }: ReleaseNoteDialogProps
             role="dialog"
             aria-modal="true"
             aria-labelledby="release-note-title"
-            className="w-full max-w-lg rounded-2xl bg-popover p-6 text-popover-foreground shadow-2xl ring-1 ring-border"
-            initial={{ opacity: 0, scale: 0.96, y: 8 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.97, y: 4, transition: { duration: 0.12 } }}
-            transition={{ type: "spring", stiffness: 420, damping: 32, mass: 0.7 }}
+            className="w-full max-w-lg rounded-lg border border-border bg-card p-6 text-card-foreground"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0, transition: { duration: 0.12 } }}
+            transition={{ duration: 0.15 }}
           >
-            <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-primary">
-              Updated
-            </span>
-            <h2 id="release-note-title" className="mt-1 text-xl font-bold tracking-tight">
+            <span className="text-[13px] text-muted-foreground">Updated</span>
+            <h2 id="release-note-title" className="mt-1 text-lg font-semibold">
               YTM Offline {version}
             </h2>
 
@@ -89,7 +86,7 @@ export function ReleaseNoteDialog({ version, onDismiss }: ReleaseNoteDialogProps
                   <button
                     key={`${index}:${segment.value}`}
                     type="button"
-                    className="font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="font-medium text-foreground underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     onClick={() => void openUrl(segment.url)}
                   >
                     {segment.value}
@@ -114,8 +111,7 @@ export function ReleaseNoteDialog({ version, onDismiss }: ReleaseNoteDialogProps
                 ref={dismissRef}
                 type="button"
                 className={cn(
-                  "ml-auto rounded-full bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground",
-                  "transition-opacity hover:opacity-90",
+                  "ml-auto h-9 rounded bg-foreground px-4 text-sm font-medium text-background",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 )}
                 onClick={onDismiss}

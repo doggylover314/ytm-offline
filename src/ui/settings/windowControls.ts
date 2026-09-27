@@ -7,7 +7,6 @@ import {
   writeLocalBooleanSetting,
 } from "../../internal/durableLocalSetting";
 
-const WINDOWS_STYLE_STORAGE_KEY = "windows-style-window-controls";
 const NATIVE_CONTROLS_STORAGE_KEY = "native-window-controls";
 const FORCE_CONTROLS_STORAGE_KEY = "force-window-controls-on-tiling-wm";
 const CHANGE_EVENT = "window-controls-change";
@@ -30,10 +29,6 @@ function subscribe(callback: () => void) {
   };
 }
 
-function readWindowsStyleWindowControls() {
-  return readBooleanSetting(WINDOWS_STYLE_STORAGE_KEY);
-}
-
 function readNativeWindowControls() {
   // Default off on every platform: the window is configured without decorations
   // (tauri.conf.json `decorations: false`) and the app draws its own title bar,
@@ -50,10 +45,6 @@ function readForceWindowControls() {
 
 function emitWindowControlsChange() {
   window.dispatchEvent(new Event(CHANGE_EVENT));
-}
-
-export function setWindowsStyleWindowControls(enabled: boolean) {
-  writeBooleanSetting(WINDOWS_STYLE_STORAGE_KEY, enabled);
 }
 
 export function setNativeWindowControls(enabled: boolean) {
@@ -79,7 +70,6 @@ export async function applyNativeWindowControls(enabled = readNativeWindowContro
 
 export async function hydrateWindowControlSettings() {
   await Promise.all([
-    hydrateLocalBooleanSetting(WINDOWS_STYLE_STORAGE_KEY, false, CHANGE_EVENT),
     hydrateLocalBooleanSetting(
       NATIVE_CONTROLS_STORAGE_KEY,
       false,
@@ -88,10 +78,6 @@ export async function hydrateWindowControlSettings() {
     ),
     hydrateLocalBooleanSetting(FORCE_CONTROLS_STORAGE_KEY, false, CHANGE_EVENT),
   ]);
-}
-
-export function useWindowsStyleWindowControls() {
-  return useSyncExternalStore(subscribe, readWindowsStyleWindowControls, () => false);
 }
 
 export function useNativeWindowControls() {

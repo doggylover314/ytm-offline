@@ -1,30 +1,14 @@
 "use client";
-// beui.dev/components/motion/range-slider
 
-import {
-  motion,
-  useMotionTemplate,
-  useMotionValue,
-  useReducedMotion,
-  useSpring,
-  useTransform,
-} from "motion/react";
 import {
   type KeyboardEvent,
   type PointerEvent,
   useCallback,
-  useEffect,
   useRef,
   useState,
 } from "react";
 
 import { cn } from "@/lib/utils";
-
-// Smooth glide for the thumb/fill — critically damped, no overshoot, so the
-// handle follows the pointer butterily and eases between snapped steps.
-const SPRING_GLIDE = { stiffness: 700, damping: 50, mass: 0.5 } as const;
-// Bouncy grab feedback for the thumb scale only.
-const SPRING_BOUNCY = { type: "spring", stiffness: 500, damping: 14, mass: 0.7 } as const;
 
 export interface RangeSliderProps {
   value?: number;
@@ -33,8 +17,13 @@ export interface RangeSliderProps {
   min?: number;
   max?: number;
   step?: number;
-  /** Render a tick dot at each step. */
+  /** Render a tick mark at each step. */
   showTicks?: boolean;
+  /**
+   * Fill colour. "foreground" (default) for levels such as volume; "primary" where the fill
+   * represents playback progress.
+   */
+  tone?: "foreground" | "primary";
   disabled?: boolean;
   className?: string;
   "aria-label"?: string;
@@ -50,29 +39,17 @@ export function RangeSlider({
   max = 100,
   step = 1,
   showTicks = true,
+  tone = "foreground",
   disabled = false,
   className,
   "aria-label": ariaLabel,
 }: RangeSliderProps) {
-  const reduce = useReducedMotion();
   const trackRef = useRef<HTMLDivElement>(null);
   const [internal, setInternal] = useState(defaultValue);
   const [active, setActive] = useState(false);
   const controlled = value !== undefined;
   const current = clamp(controlled ? value : internal, min, max);
   const percent = ((current - min) / (max - min)) * 100;
-
-  // Spring-smoothed position drives both the thumb and the fill.
-  const target = useMotionValue(percent);
-  useEffect(() => {
-    target.set(percent);
-  }, [percent, target]);
-  const smooth = useSpring(target, SPRING_GLIDE);
-  const pos = reduce ? target : smooth;
-  const left = useMotionTemplate`${pos}%`;
-  // Self-offset the thumb from 0% (flush left) to -100% (flush right) of its
-  // own width so it stays fully inside the track at both ends — no clip, no gap.
-  const thumbX = useTransform(pos, (p) => `${-p}%`);
 
   const steps = Math.floor((max - min) / step);
   const ticks =
@@ -149,33 +126,39 @@ export function RangeSlider({
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
       className={cn(
-        "relative flex h-10 w-full touch-none select-none items-center overflow-hidden rounded-lg bg-muted",
-        disabled ? "pointer-events-none opacity-50" : "cursor-grab active:cursor-grabbing",
+        "relative flex h-5 w-full touch-none select-none items-center",
+        disabled ? "pointer-events-none opacity-50" : "cursor-pointer",
         className,
       )}
     >
-      {/* fill — runs from the left edge to the thumb, consistent tone */}
-      <motion.div
-        className="absolute inset-y-0 left-0 bg-foreground/15"
-        style={{ width: left }}
-      />
-
-      {/* ticks — slight inset so the end dots don't clip */}
-      <div className="pointer-events-none absolute inset-x-2 inset-y-0">
-        {ticks.map((t) => {
-          const tp = ((t - min) / (max - min)) * 100;
-          return (
-            <span
-              key={t}
-              className="absolute top-1/2 size-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/25"
-              style={{ left: `${tp}%` }}
-            />
-          );
-        })}
+      {/* track */}
+      <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-[1px] bg-border">
+        <div
+          className={cn(
+            "h-full rounded-[1px]",
+            tone === "primary" ? "bg-primary" : "bg-foreground",
+          )}
+          style={{ width: `${percent}%` }}
+        />
       </div>
 
-      {/* vertical bar thumb — contained at both ends via thumbX */}
-      <motion.div
+      {ticks.length > 0 ? (
+        <div className="pointer-events-none absolute inset-x-0 inset-y-0">
+          {ticks.map((t) => {
+            const tp = ((t - min) / (max - min)) * 100;
+            return (
+              <span
+                key={t}
+                className="absolute top-1/2 h-2 w-px bg-muted-foreground"
+                style={{ left: `${tp}%`, transform: `translate(-${tp}%, -50%)` }}
+              />
+            );
+          })}
+        </div>
+      ) : null}
+
+      {/* 4x14 bar thumb, self-offset by its own width so it stays inside the track at both ends */}
+      <div
         role="slider"
         tabIndex={disabled ? -1 : 0}
         aria-label={ariaLabel}
@@ -184,10 +167,8 @@ export function RangeSlider({
         aria-valuenow={current}
         aria-disabled={disabled || undefined}
         onKeyDown={onKeyDown}
-        animate={reduce ? undefined : { scaleY: active ? 1.35 : 1 }}
-        transition={SPRING_BOUNCY}
-        className="absolute top-1/2 h-5 w-1.5 rounded-sm bg-foreground shadow-sm outline-none ring-foreground/30 focus-visible:ring-4"
-        style={{ left, x: thumbX, y: "-50%" }}
+        className="absolute top-1/2 h-3.5 w-1 rounded-[1px] bg-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+        style={{ left: `${percent}%`, transform: `translate(-${percent}%, -50%)` }}
       />
     </div>
   );

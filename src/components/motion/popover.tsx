@@ -1,25 +1,16 @@
 "use client";
-// beui.dev/components/motion/popover
 
-import {
-  animate,
-  type MotionValue,
-  useMotionValue,
-  useMotionValueEvent,
-  useReducedMotion,
-} from "motion/react";
 import {
   cloneElement,
   createContext,
   isValidElement,
+  type CSSProperties,
   type ReactElement,
   type ReactNode,
-  type Ref,
   useCallback,
   useContext,
   useEffect,
   useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -30,130 +21,7 @@ type Side = "top" | "bottom" | "left" | "right";
 type Align = "start" | "center" | "end";
 type TriggerMode = "click" | "hover";
 
-// This morph needs less bounce than layout motion: too much overshoot makes
-// the liquid neck balloon past the final panel edges.
-const GOO_OPEN_SPRING = {
-  type: "spring",
-  visualDuration: 0.3,
-  bounce: 0.15,
-} as const;
-const GOO_CLOSE_SPRING = {
-  type: "spring",
-  visualDuration: 0.21,
-  bounce: 0.15,
-} as const;
 const HOVER_CLOSE_DELAY = 120;
-const CIRCLE_KAPPA = 0.5523;
-
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-
-interface Rect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  r: number;
-}
-interface Geo {
-  layerW: number;
-  layerH: number;
-  left: number;
-  top: number;
-  trigger: Rect;
-  panel: Rect;
-}
-
-// Trigger rect and panel rect in a shared local coordinate box.
-function buildGeo(
-  tW: number,
-  tH: number,
-  cW: number,
-  cH: number,
-  side: Side,
-  align: Align,
-  gap: number,
-  panelRadius: number,
-): Geo {
-  /*
-   * Horizontal sides mirror the vertical ones: the side picks the offset axis and `align`
-   * positions the panel along the trigger's other edge. The goo layer below is just two
-   * rounded rects in a shared box, so it stretches in whichever direction this produces.
-   */
-  const horizontal = side === "left" || side === "right";
-  const py = horizontal
-    ? (align === "start" ? 0 : align === "end" ? tH - cH : (tH - cH) / 2)
-    : side === "bottom" ? tH + gap : -(gap + cH);
-  const px = horizontal
-    ? (side === "right" ? tW + gap : -(gap + cW))
-    : align === "start" ? 0 : align === "end" ? tW - cW : (tW - cW) / 2;
-
-  const left = Math.min(0, px);
-  const top = Math.min(0, py);
-  const layerW = Math.max(tW, px + cW) - left;
-  const layerH = Math.max(tH, py + cH) - top;
-
-  const triggerRadius = Math.min(tH / 2, panelRadius);
-
-  return {
-    layerW,
-    layerH,
-    left,
-    top,
-    trigger: { x: -left, y: -top, w: tW, h: tH, r: triggerRadius },
-    panel: { x: px - left, y: py - top, w: cW, h: cH, r: panelRadius },
-  };
-}
-
-function rectAtProgress(geo: Geo, progress: number): Rect {
-  const trigger = geo.trigger;
-  const panel = geo.panel;
-
-  return {
-    x: lerp(trigger.x, panel.x, progress),
-    y: lerp(trigger.y, panel.y, progress),
-    w: lerp(trigger.w, panel.w, progress),
-    h: lerp(trigger.h, panel.h, progress),
-    r: lerp(trigger.r, panel.r, progress),
-  };
-}
-
-function insetFor(rect: Rect, layerW: number, layerH: number) {
-  const top = rect.y;
-  const right = layerW - (rect.x + rect.w);
-  const bottom = layerH - (rect.y + rect.h);
-  const left = rect.x;
-  return `inset(${top}px ${right}px ${bottom}px ${left}px round ${rect.r}px)`;
-}
-
-function roundedRectShape(rect: Rect) {
-  const radius = Math.max(0, Math.min(rect.r, rect.w / 2, rect.h / 2));
-  const control = radius * CIRCLE_KAPPA;
-  const x1 = rect.x;
-  const y1 = rect.y;
-  const x2 = rect.x + rect.w;
-  const y2 = rect.y + rect.h;
-  const px = (value: number) => `${value.toFixed(3)}px`;
-
-  return (
-    `shape(from ${px(x1 + radius)} ${px(y1)}, ` +
-    `line to ${px(x2 - radius)} ${px(y1)}, ` +
-    `curve to ${px(x2)} ${px(y1 + radius)} with ${px(x2 - radius + control)} ${px(y1)} / ${px(x2)} ${px(y1 + radius - control)}, ` +
-    `line to ${px(x2)} ${px(y2 - radius)}, ` +
-    `curve to ${px(x2 - radius)} ${px(y2)} with ${px(x2)} ${px(y2 - radius + control)} / ${px(x2 - radius + control)} ${px(y2)}, ` +
-    `line to ${px(x1 + radius)} ${px(y2)}, ` +
-    `curve to ${px(x1)} ${px(y2 - radius)} with ${px(x1 + radius - control)} ${px(y2)} / ${px(x1)} ${px(y2 - radius + control)}, ` +
-    `line to ${px(x1)} ${px(y1 + radius)}, ` +
-    `curve to ${px(x1 + radius)} ${px(y1)} with ${px(x1)} ${px(y1 + radius - control)} / ${px(x1 + radius - control)} ${px(y1)}, ` +
-    "close)"
-  );
-}
-
-function clipForProgress(geo: Geo, progress: number, supportsShape: boolean) {
-  const rect = rectAtProgress(geo, progress);
-  return supportsShape
-    ? roundedRectShape(rect)
-    : insetFor(rect, geo.layerW, geo.layerH);
-}
 
 interface PopoverContextValue {
   open: boolean;
@@ -166,12 +34,7 @@ interface PopoverContextValue {
   align: Align;
   gap: number;
   panelRadius: number;
-  gooStrength: number;
-  reduce: boolean;
-  gooId: string;
   contentId: string;
-  progress: MotionValue<number>;
-  triggerRef: React.MutableRefObject<HTMLElement | null>;
 }
 
 const PopoverContext = createContext<PopoverContextValue | null>(null);
@@ -191,15 +54,15 @@ export interface PopoverProps {
   onOpenChange?: (open: boolean) => void;
   /** How the popover is summoned. Default "click". */
   trigger?: TriggerMode;
-  /** Which side of the trigger the panel oozes out of. Default "bottom". */
+  /** Which side of the trigger the panel opens on. Default "bottom". */
   side?: Side;
   /** Alignment along the trigger's edge. Default "center". */
   align?: Align;
-  /** Gap between trigger and panel, in px — the length of the gooey neck. Default 14. */
+  /** Gap between trigger and panel, in px. Default 4. */
   sideOffset?: number;
-  /** Corner radius of the open panel, in px. Default 16. */
+  /** Corner radius of the panel, in px. Default 6. */
   panelRadius?: number;
-  /** Blur radius feeding the goo filter — higher melts more. Default 8. */
+  /** No-op; kept so existing callers compile. */
   gooStrength?: number;
   className?: string;
 }
@@ -212,18 +75,13 @@ export function Popover({
   trigger = "click",
   side = "bottom",
   align = "center",
-  sideOffset = 14,
-  panelRadius = 16,
-  gooStrength = 8,
+  sideOffset = 4,
+  panelRadius = 6,
   className,
 }: PopoverProps) {
-  const reduce = useReducedMotion() ?? false;
-  const gooId = useId().replace(/:/g, "");
   const contentId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLElement | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const progress = useMotionValue(defaultOpen ? 1 : 0);
 
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
   const controlled = controlledOpen !== undefined;
@@ -259,19 +117,6 @@ export function Popover({
   useEffect(() => () => cancelClose(), [cancelClose]);
 
   useEffect(() => {
-    const animation = animate(
-      progress,
-      open ? 1 : 0,
-      reduce
-        ? { duration: 0 }
-        : open
-          ? GOO_OPEN_SPRING
-          : GOO_CLOSE_SPRING,
-    );
-    return () => animation.stop();
-  }, [open, progress, reduce]);
-
-  useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     // Trigger and panel share rootRef, so moving between them isn't "outside".
@@ -299,30 +144,9 @@ export function Popover({
       align,
       gap: sideOffset,
       panelRadius,
-      gooStrength,
-      reduce,
-      gooId,
       contentId,
-      progress,
-      triggerRef,
     }),
-    [
-      open,
-      setOpen,
-      toggle,
-      openHover,
-      scheduleClose,
-      trigger,
-      side,
-      align,
-      sideOffset,
-      panelRadius,
-      gooStrength,
-      reduce,
-      gooId,
-      contentId,
-      progress,
-    ],
+    [open, setOpen, toggle, openHover, scheduleClose, trigger, side, align, sideOffset, panelRadius, contentId],
   );
 
   const hoverHandlers =
@@ -334,23 +158,13 @@ export function Popover({
     <PopoverContext.Provider value={ctx}>
       <div
         ref={rootRef}
-        className={cn("relative inline-flex isolate", className)}
+        className={cn("relative inline-flex", className)}
         {...hoverHandlers}
       >
         {children}
       </div>
     </PopoverContext.Provider>
   );
-}
-
-function mergeRefs<T>(...refs: Array<Ref<T> | undefined>) {
-  return (node: T | null) => {
-    for (const ref of refs) {
-      if (typeof ref === "function") ref(node);
-      else if (ref && typeof ref === "object")
-        (ref as React.MutableRefObject<T | null>).current = node;
-    }
-  };
 }
 
 export interface PopoverTriggerProps {
@@ -365,7 +179,6 @@ export function PopoverTrigger({ children }: PopoverTriggerProps) {
 
   const child = children as ReactElement<Record<string, unknown>>;
   const childProps = child.props;
-  const childRef = (childProps as { ref?: Ref<HTMLElement> }).ref;
 
   const compose =
     (name: string, handler: () => void) =>
@@ -384,11 +197,6 @@ export function PopoverTrigger({ children }: PopoverTriggerProps) {
 
   return cloneElement(child, {
     ...handlers,
-    ref: mergeRefs(childRef, (node: HTMLElement | null) => {
-      ctx.triggerRef.current = node;
-    }),
-    // Above the goo layer (z-[-1]) so the neck reads behind it.
-    className: cn("relative z-0", childProps.className as string | undefined),
     "aria-haspopup": "dialog",
     "aria-expanded": ctx.open,
     "aria-controls": ctx.open ? ctx.contentId : undefined,
@@ -396,10 +204,31 @@ export function PopoverTrigger({ children }: PopoverTriggerProps) {
   });
 }
 
-const ALIGN_ORIGIN: Record<Align, string> = {
-  start: "left",
-  center: "center",
-  end: "right",
+const SIDE_CLASS: Record<Side, string> = {
+  bottom: "top-full",
+  top: "bottom-full",
+  left: "right-full",
+  right: "left-full",
+};
+
+const ALIGN_CLASS: Record<"vertical" | "horizontal", Record<Align, string>> = {
+  vertical: {
+    start: "left-0",
+    center: "left-1/2 -translate-x-1/2",
+    end: "right-0",
+  },
+  horizontal: {
+    start: "top-0",
+    center: "top-1/2 -translate-y-1/2",
+    end: "bottom-0",
+  },
+};
+
+const GAP_PROPERTY: Record<Side, keyof CSSProperties> = {
+  bottom: "marginTop",
+  top: "marginBottom",
+  left: "marginRight",
+  right: "marginLeft",
 };
 
 export interface PopoverContentProps {
@@ -407,94 +236,11 @@ export interface PopoverContentProps {
   className?: string;
 }
 
+/** A solid panel on the chosen side of the trigger. Stays mounted while closed, just hidden. */
 export function PopoverContent({ children, className }: PopoverContentProps) {
   const ctx = usePopoverContext("PopoverContent");
-  const {
-    side,
-    align,
-    gap,
-    panelRadius,
-    gooStrength,
-    reduce,
-    gooId,
-    contentId,
-    progress,
-    triggerRef,
-    open,
-    triggerMode,
-    openHover,
-    scheduleClose,
-  } = ctx;
-
-  const measureRef = useRef<HTMLDivElement>(null);
-  const blobRef = useRef<HTMLDivElement>(null);
-  const clipRef = useRef<HTMLDivElement>(null);
-  const geoRef = useRef<Geo | null>(null);
-  const supportsShapeRef = useRef(false);
-
-  const [sizes, setSizes] = useState({ tW: 0, tH: 0, cW: 0, cH: 0 });
-
-  useLayoutEffect(() => {
-    const triggerNode = triggerRef.current;
-    const contentNode = measureRef.current;
-    if (!contentNode) return;
-
-    const measure = () => {
-      const tW = triggerNode?.offsetWidth ?? 0;
-      const tH = triggerNode?.offsetHeight ?? 0;
-      const cW = contentNode.offsetWidth;
-      const cH = contentNode.offsetHeight;
-      setSizes((prev) =>
-        prev.tW === tW && prev.tH === tH && prev.cW === cW && prev.cH === cH
-          ? prev
-          : { tW, tH, cW, cH },
-      );
-    };
-    measure();
-
-    const observer = new ResizeObserver(measure);
-    observer.observe(contentNode);
-    if (triggerNode) observer.observe(triggerNode);
-    return () => observer.disconnect();
-  }, [triggerRef]);
-
-  const geo = useMemo(
-    () =>
-      buildGeo(
-        sizes.tW,
-        sizes.tH,
-        sizes.cW,
-        sizes.cH,
-        side,
-        align,
-        gap,
-        panelRadius,
-      ),
-    [sizes, side, align, gap, panelRadius],
-  );
-
-  // Morph the same clip on the goo body and the content, so the whole popover
-  // oozes as one and the text reveals with it.
-  const render = useCallback((g: Geo | null, p: number) => {
-    if (!g || g.layerW === 0) return;
-    const clip = clipForProgress(g, p, supportsShapeRef.current);
-    if (blobRef.current) blobRef.current.style.clipPath = clip;
-    if (clipRef.current) clipRef.current.style.clipPath = clip;
-  }, []);
-
-  useLayoutEffect(() => {
-    supportsShapeRef.current =
-      typeof CSS !== "undefined" &&
-      typeof CSS.supports === "function" &&
-      CSS.supports(
-        "clip-path",
-        "shape(from 0px 0px, line to 1px 1px, close)",
-      );
-    geoRef.current = geo;
-    render(geo, progress.get());
-  }, [geo, progress, render]);
-
-  useMotionValueEvent(progress, "change", (p) => render(geoRef.current, p));
+  const { side, align, gap, panelRadius, contentId, open, triggerMode, openHover, scheduleClose } = ctx;
+  const axis = side === "left" || side === "right" ? "horizontal" : "vertical";
 
   const hoverHandlers =
     triggerMode === "hover"
@@ -502,107 +248,20 @@ export function PopoverContent({ children, className }: PopoverContentProps) {
       : {};
 
   return (
-    <>
-      {/* Goo filter: blur, sharpen the alpha back into solid shapes, then lay
-          the crisp original on top so blobs merge with liquid edges. */}
-      <svg
-        aria-hidden
-        width="0"
-        height="0"
-        className="pointer-events-none absolute"
-      >
-        <title>Popover goo filter</title>
-        <defs>
-          <filter id={gooId} x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur
-              in="SourceGraphic"
-              stdDeviation={gooStrength}
-              result="blur"
-            />
-            <feColorMatrix
-              in="blur"
-              mode="matrix"
-              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -10"
-              result="goo"
-            />
-            <feComposite in="SourceGraphic" in2="goo" operator="atop" />
-          </filter>
-        </defs>
-      </svg>
-
-      {/* Goo body: static trigger pill + morphing blob, behind the trigger. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute z-[-1]"
-        style={{
-          left: geo.left,
-          top: geo.top,
-          width: geo.layerW,
-          height: geo.layerH,
-          filter: reduce ? undefined : `url(#${gooId})`,
-        }}
-      >
-        <div
-          className="absolute bg-popover"
-          style={{
-            left: geo.trigger.x,
-            top: geo.trigger.y,
-            width: geo.trigger.w,
-            height: geo.trigger.h,
-            borderRadius: geo.trigger.r,
-          }}
-        />
-        <div
-          ref={blobRef}
-          className="absolute inset-0 bg-popover"
-          style={{
-            clipPath: clipForProgress(geo, progress.get(), false),
-          }}
-        />
-      </div>
-
-      {/* Content, clipped by the same morph. pointer-events-none so it never
-          shadows the trigger; the open panel re-enables its own. */}
-      <div
-        className="pointer-events-none absolute z-10"
-        style={{
-          left: geo.left,
-          top: geo.top,
-          width: geo.layerW,
-          height: geo.layerH,
-        }}
-      >
-        <div
-          ref={clipRef}
-          inert={!open}
-          className="absolute inset-0"
-          style={{
-            clipPath: clipForProgress(geo, progress.get(), false),
-            pointerEvents: open ? "auto" : "none",
-          }}
-        >
-          <div
-            ref={measureRef}
-            id={contentId}
-            role="dialog"
-            {...hoverHandlers}
-            style={{
-              position: "absolute",
-              left: geo.panel.x,
-              top: geo.panel.y,
-              transformOrigin: side === "left" || side === "right"
-                ? `${side === "right" ? "left" : "right"} ${ALIGN_ORIGIN[align] === "left" ? "top" : ALIGN_ORIGIN[align] === "right" ? "bottom" : "center"}`
-                : `${ALIGN_ORIGIN[align]} ${side === "bottom" ? "top" : "bottom"}`,
-            }}
-            className={cn(
-              "w-max max-w-[min(92vw,20rem)] p-4 text-popover-foreground outline-none",
-              className,
-            )}
-          >
-            {children}
-          </div>
-        </div>
-      </div>
-    </>
+    <div
+      id={contentId}
+      role="dialog"
+      hidden={!open}
+      {...hoverHandlers}
+      style={{ [GAP_PROPERTY[side]]: gap, borderRadius: panelRadius }}
+      className={cn(
+        "absolute z-50 w-max max-w-[min(92vw,20rem)] bg-card p-4 text-popover-foreground shadow-[inset_0_0_0_1px_var(--color-border)] outline-none",
+        SIDE_CLASS[side],
+        ALIGN_CLASS[axis][align],
+        className,
+      )}
+    >
+      {children}
+    </div>
   );
 }

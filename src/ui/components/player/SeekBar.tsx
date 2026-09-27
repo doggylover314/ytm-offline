@@ -1,29 +1,21 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { shallowEqual, usePlayerSelector } from "../../../player/playerStore";
 import { playerController } from "../../../player/playerStore";
 import { playerUIStore, usePlayerUIState } from "../../stores/playerUIStore";
-import { formatMinutesSeconds } from "@/lib/utils";
+import { cn, formatMinutesSeconds } from "@/lib/utils";
 
 /*
  * Deliberately NOT beUI's RangeSlider: that component snaps to discrete steps, while
  * seeking is continuous and commits asynchronously on release (see handleSeekEnd's
- * pending-seek reconciliation). The native input keeps that behaviour; only the skin changed.
+ * pending-seek reconciliation). A native input keeps that behaviour and keyboard support; it
+ * sits invisibly over the drawn line, with a taller hit area than the line's 3px.
  */
-const SEEK_SLIDER = [
-  "h-1 w-full cursor-pointer appearance-none rounded-full bg-transparent",
-  "disabled:cursor-default disabled:opacity-50",
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-  // Track: filled to --slider-progress, muted beyond it.
-  "[&::-webkit-slider-runnable-track]:h-1 [&::-webkit-slider-runnable-track]:rounded-full",
-  "[&::-webkit-slider-runnable-track]:bg-[linear-gradient(to_right,var(--color-primary)_var(--slider-progress),var(--color-muted)_var(--slider-progress))]",
-  "[&::-moz-range-track]:h-1 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:bg-muted",
-  "[&::-moz-range-progress]:h-1 [&::-moz-range-progress]:rounded-full [&::-moz-range-progress]:bg-primary",
-  // Thumb: hidden until hover/drag, matching the old bar's minimal resting state.
-  "[&::-webkit-slider-thumb]:size-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full",
-  "[&::-webkit-slider-thumb]:-mt-1 [&::-webkit-slider-thumb]:bg-foreground [&::-webkit-slider-thumb]:opacity-0",
-  "[&::-webkit-slider-thumb]:transition-opacity hover:[&::-webkit-slider-thumb]:opacity-100",
-  "focus-visible:[&::-webkit-slider-thumb]:opacity-100",
-  "[&::-moz-range-thumb]:size-3 [&::-moz-range-thumb]: [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-foreground",
+const SEEK_INPUT = [
+  "peer absolute inset-x-0 -top-1 z-10 m-0 h-3 w-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-default",
+  // A hairline thumb, so a click lands on the time under the pointer rather than half a
+  // default thumb's width off it.
+  "[&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-px [&::-webkit-slider-thumb]:appearance-none",
+  "[&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:w-px [&::-moz-range-thumb]:border-0",
 ].join(" ");
 
 /**
@@ -36,6 +28,42 @@ const TIME_COMMIT_THRESHOLD_S = 0.2;
 const IDLE_POLL_MS = 250;
 
 const formatTime = formatMinutesSeconds;
+
+/*
+ * The elapsed and total times sit beside the transport, away from the line itself. The bar
+ * publishes what it displays here so those two labels re-render on their own instead of the
+ * whole player bar re-rendering with them.
+ */
+let displayedPosition = { currentTime: 0, duration: 0 };
+const positionListeners = new Set<() => void>();
+
+function publishPosition(currentTime: number, duration: number) {
+  if (displayedPosition.currentTime === currentTime && displayedPosition.duration === duration) return;
+  displayedPosition = { currentTime, duration };
+  for (const listener of positionListeners) listener();
+}
+
+function subscribePosition(listener: () => void) {
+  positionListeners.add(listener);
+  return () => {
+    positionListeners.delete(listener);
+  };
+}
+
+/** Elapsed or total time for the song, as shown by the seek bar (including mid-drag). */
+export function SeekTime({ kind }: { kind: "elapsed" | "total" }) {
+  const position = useSyncExternalStore(subscribePosition, () => displayedPosition);
+  return (
+    <time
+      className={cn(
+        "w-10 shrink-0 text-xs tabular-nums text-muted-foreground",
+        kind === "elapsed" && "text-right",
+      )}
+    >
+      {formatTime(kind === "elapsed" ? position.currentTime : position.duration)}
+    </time>
+  );
+}
 
 export function SeekBar() {
   const state = usePlayerSelector(
@@ -100,6 +128,10 @@ export function SeekBar() {
   };
 
   useEffect(() => () => cancelSeekAnimation(), []);
+
+  useEffect(() => {
+    publishPosition(currentTime, duration);
+  }, [currentTime, duration]);
 
   /*
    * Poll the engine on a frame loop, but only commit to state when the value moved enough to
@@ -242,11 +274,10 @@ export function SeekBar() {
 
   const isDisabled = !state.currentTrack || state.status === "loading";
 
+  const progress = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
+
   return (
-    <div className="group/seek flex w-full items-center gap-2.5">
-      <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-        {formatTime(currentTime)}
-      </span>
+    <div className="relative h-[3px] w-full shrink-0">
       <input
         type="range"
         min="0"
@@ -260,15 +291,16 @@ export function SeekBar() {
         onPointerUp={(event) => void handleSeekEnd(event)}
         onPointerCancel={handleSeekCancel}
         disabled={isDisabled}
-        className={SEEK_SLIDER}
-        style={{
-          "--slider-progress": `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
-        } as React.CSSProperties}
+        className={SEEK_INPUT}
         aria-label="Seek"
       />
-      <span className="w-10 shrink-0 text-xs tabular-nums text-muted-foreground">
-        {formatTime(duration)}
-      </span>
+      <div
+        className="flex h-full w-full bg-border peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ring"
+        aria-hidden="true"
+      >
+        <div className="h-full bg-primary" style={{ width: `${progress}%` }} />
+        {state.currentTrack && <div className="h-full w-[3px] shrink-0 bg-foreground" />}
+      </div>
     </div>
   );
 }

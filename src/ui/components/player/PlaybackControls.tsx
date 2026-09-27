@@ -1,4 +1,3 @@
-import { AnimatePresence, motion } from "motion/react";
 import { SpinnerSteps } from "@/components/motion/loader";
 import { cn } from "@/lib/utils";
 import {
@@ -14,21 +13,12 @@ import {
 } from "@/ui/icons";
 import { shallowEqual, usePlayerSelector } from "../../../player/playerStore";
 import { playerController } from "../../../player/playerStore";
+import { SeekTime } from "./SeekBar";
+import { PLAYER_ICON_BUTTON } from "./playerButton";
 
 interface PlaybackControlsProps {
   extraControlsAlwaysVisible?: boolean;
 }
-
-const CONTROL_BUTTON =
-  "flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-
-/** Crossfade+scale used by the play/pause/loading glyph swap. */
-const GLYPH_MOTION = {
-  initial: { opacity: 0, scale: 0.6 },
-  animate: { opacity: 1, scale: 1 },
-  exit: { opacity: 0, scale: 0.6 },
-  transition: { type: "spring" as const, stiffness: 620, damping: 34 },
-};
 
 export function PlaybackControls({ extraControlsAlwaysVisible = true }: PlaybackControlsProps) {
   const state = usePlayerSelector(
@@ -71,12 +61,12 @@ export function PlaybackControls({ extraControlsAlwaysVisible = true }: Playback
         ? "Loop the queue"
         : "Play in order";
 
-  // In-order is the resting state, so it reads as Linear; the other two are Bold.
-  const isOrderActive = state.playbackOrderMode !== "in-order";
   const isShuffled = state.shuffleEnabled;
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-2">
+      <SeekTime kind="elapsed" />
+
       {/*
         Shuffle sits opposite repeat, the arrangement every player shares — and it is what the
         spacer here used to stand in for, so the previous/play/next trio stays centred without
@@ -91,7 +81,7 @@ export function PlaybackControls({ extraControlsAlwaysVisible = true }: Playback
       >
         <button
           type="button"
-          className={cn(CONTROL_BUTTON, isShuffled && "text-primary hover:text-primary")}
+          className={PLAYER_ICON_BUTTON}
           onClick={handleShuffleToggle}
           aria-pressed={isShuffled}
           aria-label={isShuffled ? "Turn off shuffle" : "Shuffle"}
@@ -103,48 +93,38 @@ export function PlaybackControls({ extraControlsAlwaysVisible = true }: Playback
 
       <button
         type="button"
-        className={CONTROL_BUTTON}
+        className={PLAYER_ICON_BUTTON}
         onClick={handleSkipPrevious}
         disabled={!hasCurrentTrack}
         aria-label="Previous track"
       >
-        <SkipPreviousIcon size={20} />
+        <SkipPreviousIcon size={22} />
       </button>
 
       <button
         type="button"
-        className="flex size-11 items-center justify-center rounded-full bg-primary text-primary-foreground transition-[transform,background-color] hover:bg-primary/80 active:scale-95 disabled:pointer-events-none disabled:opacity-40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        className="flex size-10 items-center justify-center rounded bg-foreground text-background disabled:pointer-events-none disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-chrome"
         onClick={handlePlayPause}
         disabled={isBusy || !hasCurrentTrack}
         aria-label={isBusy ? "Loading song" : isPlaying ? "Pause" : "Play"}
       >
-        <span className="relative grid size-5 place-items-center" aria-hidden="true">
-          <AnimatePresence initial={false} mode="popLayout">
-            {isBusy ? (
-              <motion.span key="loading" {...GLYPH_MOTION} className="absolute">
-                <SpinnerSteps  size={20} />
-              </motion.span>
-            ) : isPlaying ? (
-              <motion.span key="pause" {...GLYPH_MOTION} className="absolute">
-                <PauseActiveIcon size={20} />
-              </motion.span>
-            ) : (
-              <motion.span key="play" {...GLYPH_MOTION} className="absolute">
-                <PlayActiveIcon size={20} />
-              </motion.span>
-            )}
-          </AnimatePresence>
-        </span>
+        {isBusy ? (
+          <SpinnerSteps size={22} />
+        ) : isPlaying ? (
+          <PauseActiveIcon size={22} aria-hidden="true" />
+        ) : (
+          <PlayActiveIcon size={22} aria-hidden="true" />
+        )}
       </button>
 
       <button
         type="button"
-        className={CONTROL_BUTTON}
+        className={PLAYER_ICON_BUTTON}
         onClick={handleSkipNext}
         disabled={!hasCurrentTrack}
         aria-label="Next track"
       >
-        <SkipNextIcon size={20} />
+        <SkipNextIcon size={22} />
       </button>
 
       <div
@@ -156,7 +136,7 @@ export function PlaybackControls({ extraControlsAlwaysVisible = true }: Playback
       >
         <button
           type="button"
-          className={cn(CONTROL_BUTTON, isOrderActive && "text-primary hover:text-primary")}
+          className={PLAYER_ICON_BUTTON}
           onClick={handlePlaybackOrderCycle}
           aria-label={orderLabel}
           title={orderLabel}
@@ -170,6 +150,8 @@ export function PlaybackControls({ extraControlsAlwaysVisible = true }: Playback
           )}
         </button>
       </div>
+
+      <SeekTime kind="total" />
     </div>
   );
 }

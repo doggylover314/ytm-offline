@@ -22,6 +22,15 @@ import {
   type PlaylistContextMenuValue,
 } from "./playlistContextMenuContext";
 
+/** Menu panel and row, per the approved design: solid card, 1px edge, 36px rows. */
+const MENU_PANEL =
+  "fixed z-50 flex min-w-56 flex-col rounded-lg bg-card p-1.5 border border-border";
+const MENU_ITEM =
+  "flex h-9 w-full shrink-0 items-center gap-2.5 rounded px-2.5 text-left text-sm text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+/** Solid notice, bottom centre. */
+const NOTICE =
+  "fixed bottom-28 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-3 rounded-lg bg-foreground px-4 py-3 text-sm text-background";
+
 /* Re-exported so existing `from "./PlaylistContextMenu"` imports keep working; the context
    itself has to live outside this file. See playlistContextMenuContext.ts. */
 export { usePlaylistContextMenu } from "./playlistContextMenuContext";
@@ -343,14 +352,14 @@ export function PlaylistContextMenuProvider({
       {position && (album || playlist) && (
         <div
           ref={menuRef}
-          className="fixed z-50 flex min-w-56 flex-col gap-0.5 rounded-xl bg-popover/95 p-1.5 shadow-2xl backdrop-blur"
+          className={MENU_PANEL}
           style={{ left: position.x, top: position.y }}
           role="menu"
           onMouseDown={(event) => event.stopPropagation()}
         >
           {renameDraft !== null ? (
             <div className="flex flex-col gap-2 p-1">
-              <span className="text-xs font-medium text-muted-foreground">Rename playlist</span>
+              <span className="px-1 text-xs font-medium text-muted-foreground">Rename playlist</span>
               <input
                 ref={renameInputRef}
                 value={renameDraft}
@@ -360,19 +369,19 @@ export function PlaylistContextMenuProvider({
                   if (event.key === "Escape") setRenameDraft(null);
                 }}
                 aria-label="Playlist name"
-                className="w-full min-w-0 rounded-lg bg-background px-2.5 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-inset focus:ring-border"
+                className="h-9 w-full min-w-0 rounded bg-background px-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
               />
               <div className="flex justify-end gap-1.5">
                 <button
                   type="button"
-                  className="rounded-full px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="h-8 rounded px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   onClick={() => setRenameDraft(null)}
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  className="rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-transform hover:scale-[1.02] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="h-8 rounded bg-foreground px-3 text-sm font-medium text-background transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   onClick={() => void submitRename()}
                 >
                   Save
@@ -385,7 +394,7 @@ export function PlaylistContextMenuProvider({
             <button
               type="button"
               role="menuitem"
-              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className={MENU_ITEM}
               onClick={() => void copyAlbumUrl()}
             >
               <CopyIcon size={18} />
@@ -396,7 +405,7 @@ export function PlaylistContextMenuProvider({
             <button
               type="button"
               role="menuitem"
-              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className={MENU_ITEM}
               onClick={() => void copyPlaylistUrl()}
             >
               <CopyIcon size={18} />
@@ -407,7 +416,7 @@ export function PlaylistContextMenuProvider({
             <button
               type="button"
               role="menuitem"
-              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className={MENU_ITEM}
               onClick={toggleHiddenPlaylist}
             >
               {isHiddenPlaylist ? <EyeIcon size={18} /> : <EyeClosedIcon size={18} />}
@@ -418,7 +427,7 @@ export function PlaylistContextMenuProvider({
             <button
               type="button"
               role="menuitem"
-              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className={MENU_ITEM}
               onClick={() => setRenameDraft(playlist?.title ?? "")}
             >
               <PencilIcon size={18} />
@@ -429,7 +438,7 @@ export function PlaylistContextMenuProvider({
             <button
               type="button"
               role="menuitem"
-              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className={MENU_ITEM}
               onClick={() => void choosePlaylistImage()}
             >
               <ImageIcon size={18} />
@@ -440,7 +449,7 @@ export function PlaylistContextMenuProvider({
             <button
               type="button"
               role="menuitem"
-              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className={MENU_ITEM}
               onClick={() => void clearPlaylistImage()}
             >
               <ImageIcon size={18} />
@@ -451,7 +460,7 @@ export function PlaylistContextMenuProvider({
             <button
               type="button"
               role="menuitem"
-              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className={MENU_ITEM}
               onClick={() => void exportSelectedPlaylist()}
             >
               <DownloadIcon size={18} />
@@ -464,12 +473,7 @@ export function PlaylistContextMenuProvider({
             <button
               type="button"
               role="menuitem"
-              className={cn(
-                "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                confirmDelete
-                  ? "bg-destructive/10 text-destructive"
-                  : "text-foreground hover:bg-card",
-              )}
+              className={cn(MENU_ITEM, "text-destructive", confirmDelete && "bg-muted")}
               onClick={() => {
                 if (confirmDelete) {
                   void deleteSelectedPlaylist();
@@ -492,7 +496,7 @@ export function PlaylistContextMenuProvider({
             <button
               type="button"
               role="menuitem"
-              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className={MENU_ITEM}
               onClick={() => void toggleAlbumSaved()}
             >
               {isSaved ? <BookmarkActiveIcon size={18} /> : <BookmarkIcon size={18} />}
@@ -504,7 +508,7 @@ export function PlaylistContextMenuProvider({
         </div>
       )}
       {toast && (
-        <div className="fixed bottom-28 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-2 rounded-full bg-popover/95 px-4 py-2 text-sm text-foreground shadow-2xl backdrop-blur" role="status">
+        <div className={NOTICE} role="status">
           {isSaving ? (
             <Loader variant="spinner" size={18} />
           ) : (toast.startsWith("Saved ") || toast.startsWith("Removed ") || toast === "Url copied to clipboard" || toast === "Local playlist deleted") && (

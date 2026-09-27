@@ -4,6 +4,7 @@ import { Loader } from "@/components/motion/loader";
 import { cn } from "@/lib/utils";
 import type { AuthFlow, AuthProgress, AuthStage } from "../../datasource/types";
 import { CheckActiveIcon, GlobalIcon, LoginIcon, PlaylistIcon, UserIcon } from "../icons";
+import { AppMark } from "./AppLoadingScreen";
 
 interface Stage {
   id: AuthStage;
@@ -114,27 +115,27 @@ export function AuthOverlay({ progress, onCancel }: AuthOverlayProps) {
 
   return (
     <motion.div
-      /* Rounded to the window: this covers the whole app, and square corners on a rounded
-         window paint over the corner cutout — the blur shows as four hard tabs. The variable
-         is 0 when maximized or on Linux, so it follows the window rather than guessing. */
-      className="fixed inset-0 z-[95] grid place-items-center overflow-hidden rounded-[var(--window-radius)] bg-background/85 [backdrop-filter:blur(16px)] [-webkit-backdrop-filter:blur(16px)]"
-      initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 1.01 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 1.01 }}
-      transition={{ duration: 0.18 }}
+      /* Opaque: this covers the whole app, title bar included. Rounded to the window so it
+         follows the corner cutout; the variable is 0 when maximized or on Linux. */
+      className="fixed inset-0 z-[95] grid place-items-center overflow-hidden rounded-[var(--window-radius)] bg-background"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: reduce ? 0 : 0.18 }}
       role="status"
       aria-live="polite"
       aria-label={headings.title}
     >
-      <div className="flex w-full max-w-sm flex-col gap-6 rounded-3xl bg-card p-7 shadow-2xl">
-        <div className="flex flex-col gap-1.5">
-          <strong className="text-base font-semibold text-foreground">{headings.title}</strong>
-          <span className="text-sm text-muted-foreground">
+      <div className="flex w-[400px] max-w-[calc(100vw-2rem)] flex-col items-start gap-6">
+        <AppMark size={64} />
+        <div className="flex flex-col gap-2">
+          <strong className="text-2xl font-semibold text-foreground">{headings.title}</strong>
+          <span className="text-[15px] leading-normal text-muted-foreground">
             {activeIndex <= 0 ? headings.waiting : headings.working}
           </span>
         </div>
 
-        <ol className="flex flex-col gap-1">
+        <ol className="flex w-full flex-col gap-0.5">
           {stages.map((stage, index) => (
             <AuthStep
               key={stage.id}
@@ -153,7 +154,7 @@ export function AuthOverlay({ progress, onCancel }: AuthOverlayProps) {
 
         {canCancel && (
           <button
-            className="self-start rounded-full px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-11 w-full rounded bg-card text-[15px] font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             type="button"
             onClick={onCancel}
           >
@@ -182,8 +183,8 @@ function AuthStep({ stage, state, note }: AuthStepProps) {
   return (
     <li
       className={cn(
-        "flex items-start gap-3 rounded-2xl px-3 py-2.5 transition-colors duration-200",
-        state === "active" && "bg-muted",
+        "flex items-start gap-3 rounded px-3 py-2.5 transition-colors duration-200",
+        state === "active" && "bg-card",
       )}
     >
       {/*
@@ -192,11 +193,11 @@ function AuthStep({ stage, state, note }: AuthStepProps) {
       */}
       <span className="grid size-6 shrink-0 place-items-center" aria-hidden="true">
         {state === "done" ? (
-          <CheckActiveIcon size={20} className="text-primary" />
+          <CheckActiveIcon size={20} className="text-foreground" />
         ) : state === "active" ? (
-          <Loader variant="spinner" size={18} label="" className="text-primary" />
+          <Loader variant="spinner" size={18} label="" className="text-foreground" />
         ) : (
-          <Icon size={18} className="text-muted-foreground/50" />
+          <Icon size={18} className="text-muted-foreground" />
         )}
       </span>
 
@@ -208,7 +209,7 @@ function AuthStep({ stage, state, note }: AuthStepProps) {
         <span
           className={cn(
             "text-sm font-medium transition-colors duration-200",
-            state === "pending" ? "text-muted-foreground/60" : "text-foreground",
+            state === "pending" ? "text-muted-foreground" : "text-foreground",
           )}
         >
           {stage.title}
@@ -221,7 +222,7 @@ function AuthStep({ stage, state, note }: AuthStepProps) {
         <AnimatePresence initial={false}>
           {state === "active" && (
             <motion.span
-              className="overflow-hidden text-xs leading-relaxed text-muted-foreground"
+              className="overflow-hidden text-[13px] leading-normal text-muted-foreground"
               initial={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}
               animate={reduce ? { opacity: 1 } : { opacity: 1, height: "auto" }}
               exit={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}

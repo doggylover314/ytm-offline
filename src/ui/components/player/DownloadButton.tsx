@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 import { Tooltip } from "@/components/motion/tooltip";
 import { SpinnerSteps } from "@/components/motion/loader";
-import { DownloadActiveIcon, DownloadIcon } from "@/ui/icons";
+import { DownloadActiveIcon, DownloadIcon, DownloadProgressIcon } from "@/ui/icons";
 import { usePlayerSelector } from "../../../player/playerStore";
 import {
   cancelDownload,
@@ -9,9 +9,7 @@ import {
   removeDownload,
   useOfflineState,
 } from "../../../player/offlineStore";
-
-const RING_RADIUS = 8;
-const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+import { PLAYER_ICON_BUTTON } from "./playerButton";
 
 /**
  * Download state for the song that is actually playing.
@@ -55,62 +53,26 @@ export function DownloadButton() {
     <Tooltip content={label}>
       <button
         type="button"
-        className={cn(
-          "flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          isReady || isDownloading
-            ? "text-primary"
-            : isQueued
-              ? "text-muted-foreground"
-              : "text-muted-foreground hover:text-foreground",
-        )}
+        className={cn(PLAYER_ICON_BUTTON, isQueued && "text-muted-foreground")}
         onClick={onClick}
         aria-label={label}
       >
         {isReady ? (
-          <DownloadActiveIcon size={19} aria-hidden="true" />
+          <DownloadActiveIcon size={20} aria-hidden="true" />
         ) : isDownloading && progress !== null ? (
-          <ProgressRing progress={progress} />
+          <DownloadProgressIcon
+            size={20}
+            progress={Math.min(1, Math.max(0, progress / 100))}
+            aria-hidden="true"
+          />
         ) : isDownloading ? (
           /* The backend only reports a percentage once it knows the total size. Until then a
-             determinate ring would have to invent a number, so it spins instead. */
-          <SpinnerSteps size={17} />
+             determinate fill would have to invent a number, so it spins instead. */
+          <SpinnerSteps size={18} />
         ) : (
-          <DownloadIcon
-            size={19}
-            aria-hidden="true"
-            className={cn(isQueued && "opacity-60")}
-          />
+          <DownloadIcon size={20} aria-hidden="true" />
         )}
       </button>
     </Tooltip>
-  );
-}
-
-/** A ring rather than a percentage: at 8px of radius there is no room for two digits. */
-function ProgressRing({ progress }: { progress: number }) {
-  const filled = Math.min(1, Math.max(0, progress / 100));
-  return (
-    <svg viewBox="0 0 20 20" className="size-[19px] -rotate-90" aria-hidden="true">
-      <circle
-        cx="10"
-        cy="10"
-        r={RING_RADIUS}
-        fill="none"
-        stroke="currentColor"
-        strokeOpacity={0.22}
-        strokeWidth="2"
-      />
-      <circle
-        cx="10"
-        cy="10"
-        r={RING_RADIUS}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeDasharray={`${RING_CIRCUMFERENCE * filled} ${RING_CIRCUMFERENCE}`}
-      />
-    </svg>
   );
 }

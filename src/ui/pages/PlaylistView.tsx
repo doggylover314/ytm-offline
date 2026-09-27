@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { SpinnerSteps } from "@/components/motion/loader";
-import { ArrowDownIcon, ArrowUpIcon, CloseIcon, FolderAddIcon, SearchIcon } from "@/ui/icons";
+import { ArrowDownIcon, ArrowUpIcon, CloseIcon, FolderAddIcon, MoreIcon, SearchIcon } from "@/ui/icons";
 import type { Playlist, Track } from "../../datasource/types";
 import type { LibraryController } from "../../player/LibraryController";
 import type { PlayerControllerActions } from "../../player/playerStore";
@@ -16,10 +16,10 @@ import { useTrackSelection } from "../hooks/useTrackSelection";
 import { queueDownloads, useOfflineState } from "../../player/offlineStore";
 import { disablePlaylistSync, enablePlaylistSync, useSyncedPlaylists } from "../../player/playlistSync";
 import { usePlaylistContextMenu } from "../components/PlaylistContextMenu";
-import { formatCollectionMeta, MediaHeader } from "../components/MediaHeader";
+import { formatCollectionMeta, HEADER_SECONDARY_BUTTON, MediaHeader } from "../components/MediaHeader";
 import { isLikedSongsId, likedSongsCover } from "../likedSongsArtwork";
 import { TrackListSkeleton } from "../components/Skeleton";
-import { TrackRow } from "../components/TrackRow";
+import { TrackListHeader, TrackRow } from "../components/TrackRow";
 import { useNowPlaying } from "../hooks/useNowPlaying";
 import { useKeyboardShortcuts } from "../settings/keyboardShortcuts";
 import { shouldStartPageSearch } from "./pageSearchKeyboard";
@@ -30,9 +30,9 @@ import { collectTrackPages } from "./collectTrackPages";
  * the behaviour the original .playlistSearch width transition provided.
  */
 const SEARCH_FIELD =
-  "group/search flex min-h-8 items-center gap-1.5 overflow-hidden rounded-full bg-card px-2.5 " +
+  "group/search flex h-8 items-center gap-1.5 overflow-hidden rounded bg-card px-2.5 " +
   "text-muted-foreground transition-[width,background-color] duration-200 cursor-text " +
-  "hover:bg-muted focus-within:bg-muted focus-within:text-foreground " +
+  "hover:bg-muted focus-within:bg-card focus-within:text-foreground " +
   "[&_input]:min-w-0 [&_input]:flex-1 [&_input]:bg-transparent [&_input]:text-sm " +
   "[&_input]:text-foreground [&_input]:outline-none [&_input]:placeholder:text-muted-foreground";
 const SEARCH_FIELD_COLLAPSED = "w-9 hover:w-56 focus-within:w-56";
@@ -68,6 +68,17 @@ function SortDirectionIcon({ direction }: { direction: SortDirection }) {
   return direction === "asc"
     ? <ArrowUpIcon size={13} strokeWidth={2.2} aria-hidden="true" />
     : <ArrowDownIcon size={13} strokeWidth={2.2} aria-hidden="true" />;
+}
+
+/** "Synced 2 min ago". Coarse on purpose: the sync runs in the background, not by the second. */
+function formatSyncedAgo(syncedAt: number, now: number): string {
+  const minutes = Math.floor(Math.max(0, now - syncedAt) / 60_000);
+  if (minutes < 1) return "Synced just now";
+  if (minutes < 60) return `Synced ${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `Synced ${hours} hr ago`;
+  const days = Math.floor(hours / 24);
+  return `Synced ${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 function getTrackRenderKey(track: Track, index: number): string {
@@ -146,7 +157,7 @@ function PlaylistDescription({
     return (
       <div className="flex flex-col gap-2">
         <textarea
-          className="min-h-20 w-full resize-y rounded-xl bg-white/[0.04] px-3 py-2 text-sm text-foreground outline-none ring-1 ring-white/10 placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          className="min-h-20 w-full resize-y rounded bg-card px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
           value={draft}
           autoFocus
           maxLength={5000}
@@ -157,7 +168,7 @@ function PlaylistDescription({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className="rounded-full bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-8 rounded bg-foreground px-3 text-sm font-medium text-background transition-colors hover:bg-white disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             disabled={isSaving}
             onClick={() => {
               setIsSaving(true);
@@ -176,7 +187,7 @@ function PlaylistDescription({
           </button>
           <button
             type="button"
-            className="rounded-full px-4 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-8 rounded px-3 text-sm font-medium text-foreground transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             disabled={isSaving}
             onClick={() => {
               setDraft(description);
@@ -208,7 +219,7 @@ function PlaylistDescription({
       {canEdit && (
         <button
           type="button"
-          className="shrink-0 rounded-full px-3 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="h-8 shrink-0 rounded px-3 text-sm font-medium text-foreground transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={() => setIsEditing(true)}
         >
           {description ? "Edit" : "Add description"}
@@ -283,6 +294,16 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
     }),
     [tracks, offlineState.entries, hasMoreTracks],
   );
+
+  /* Ticks once a minute while there is a sync time to show, so "2 min ago" does not freeze. */
+  const lastSyncedAt = syncState?.lastSyncedAt ?? null;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (lastSyncedAt === null) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, [lastSyncedAt]);
 
   const isLocalPlaylistView = playlist ? isLocalPlaylist(playlist) : false;
   /*
@@ -698,8 +719,8 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
   };
 
   return (
-    <div className="flex flex-col gap-8">
-      <div onContextMenu={(event) => openPlaylistMenu(event, playlist)}>
+    <div className="flex flex-col gap-7">
+      <div className="flex flex-col gap-5" onContextMenu={(event) => openPlaylistMenu(event, playlist)}>
         <MediaHeader
           eyebrow="Playlist"
           title={playlist.title}
@@ -709,7 +730,7 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
           artworkVariant="playlist"
           artworkSlot={isLikedSongs ? (
             <img
-              className="size-44 shrink-0 rounded-2xl object-cover shadow-2xl ring-1 ring-white/10"
+              className="size-[200px] shrink-0 rounded-lg object-cover"
               src={likedSongsCover}
               alt=""
             />
@@ -723,12 +744,12 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
                     onClick={() => void handleAddLocalFolder()}
                     disabled={isChoosingFolder}
                     aria-label="Add a music folder"
-                    className="flex size-11 items-center justify-center rounded-full bg-card text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className={cn(HEADER_SECONDARY_BUTTON, "w-10")}
                   >
                     {isChoosingFolder ? (
-                      <SpinnerSteps size={18} color="currentColor" />
+                      <SpinnerSteps size={20} color="currentColor" />
                     ) : (
-                      <FolderAddIcon size={18} aria-hidden="true" />
+                      <FolderAddIcon size={20} aria-hidden="true" />
                     )}
                   </button>
                 </Tooltip>
@@ -771,6 +792,16 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
             counts: downloadCounts,
             isBusy: Boolean(syncState?.syncing),
           }}
+          menuItems={[{
+            label: "Playlist options",
+            icon: <MoreIcon size={18} aria-hidden="true" />,
+            onSelect: (event) => openPlaylistMenu(event, playlist),
+          }]}
+          status={syncState?.error
+            ? "Sync failed"
+            : syncState && !syncState.syncing && lastSyncedAt !== null
+              ? formatSyncedAgo(lastSyncedAt, now)
+              : undefined}
         />
         <PlaylistDescription playlist={playlist} libraryController={libraryController} />
       </div>
@@ -791,7 +822,7 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
       {!error && (isLoading || tracks.length > 0 || hasMoreTracks) && (
         <>
           <div
-            className="flex flex-wrap items-center gap-1.5 self-start [&>button]:flex [&>button]:min-h-8 [&>button]:min-w-0 [&>button]:items-center [&>button]:justify-center [&>button]:gap-1.5 [&>button]:rounded-full [&>button]:bg-white/[0.04] [&>button]:px-3 [&>button]:text-sm [&>button]:font-medium [&>button]:text-muted-foreground [&>button]:transition-colors hover:[&>button]:bg-white/[0.08] hover:[&>button]:text-foreground focus-visible:[&>button]:outline-none focus-visible:[&>button]:ring-2 focus-visible:[&>button]:ring-ring"
+            className="flex flex-wrap items-center gap-2 self-start [&>button]:flex [&>button]:h-8 [&>button]:min-w-0 [&>button]:items-center [&>button]:justify-center [&>button]:gap-1.5 [&>button]:rounded [&>button]:px-3 [&>button]:text-[13px] [&>button]:font-medium [&>button]:transition-colors focus-visible:[&>button]:outline-none focus-visible:[&>button]:ring-2 focus-visible:[&>button]:ring-ring"
             role="group"
             aria-label="Playlist song tools"
           >
@@ -799,7 +830,9 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
               <button
                 key={item.value}
                 type="button"
-                className={sort === item.value ? "bg-primary/15 text-foreground" : ""}
+                className={sort === item.value
+                  ? "bg-foreground text-background"
+                  : "bg-card text-foreground hover:bg-muted"}
                 aria-pressed={sort === item.value}
                 aria-label={`Sort by ${item.label} ${
                   sort === item.value ? getDirectionLabel(item.value, sortDirection) : ""
@@ -808,12 +841,7 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
               >
                 <span>{item.label}</span>
                 {sort === item.value && (
-                  <span
-                    className={`${"flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"} ${
-                      item.value === "dateAdded" ? "flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" : ""
-                    }`}
-                    aria-hidden="true"
-                  >
+                  <span className="flex items-center" aria-hidden="true">
                     <span className="shrink-0">
                       <SortDirectionIcon direction={sortDirection} />
                     </span>
@@ -845,7 +873,7 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
               />
               {playlistSearchQuery && (
                 <button
-                  className="flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="flex size-6 shrink-0 items-center justify-center rounded text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   type="button"
                   aria-label="Clear playlist search"
                   onClick={() => setPlaylistSearchQuery("")}
@@ -861,6 +889,7 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
             <p className="px-2 py-10 text-center text-sm text-muted-foreground">No songs match this search.</p>
           ) : (
           <div className="flex flex-col gap-0.5">
+            <TrackListHeader showAlbum showDownload showDuration className="mb-1.5" />
             {visibleTracks.map((track, index) => {
               const trackPath = track.localPath ?? track.playlistItemId ?? track.id;
               /*
@@ -900,7 +929,7 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
                     void playPlaylistTrack(track);
                   }}
                   showDownload
-
+                  showDuration
                   showRating
                   onQuickAddToQueue={() => playerController.addToQueue(track)}
                   onQuickAdd={() => openPlaylistPicker(track)}
@@ -912,10 +941,10 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
                 >
                   {/* Reorder drop indicators, drawn inside the row so they track it. */}
                   {isDropBefore && (
-                    <span className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-primary" />
+                    <span className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-foreground" />
                   )}
                   {isDropAfter && (
-                    <span className="pointer-events-none absolute inset-x-0 -bottom-px h-0.5 bg-primary" />
+                    <span className="pointer-events-none absolute inset-x-0 -bottom-px h-0.5 bg-foreground" />
                   )}
                 </TrackRow>
               );

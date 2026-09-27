@@ -9,7 +9,7 @@ interface ExpandedPlayerBarProps {
 export default function ExpandedPlayerBar({ isOpen, onClose }: ExpandedPlayerBarProps) {
   return (
     /* 1. The outer floating frame that grows from 70px to 100vh */
-    <div className={cn("fixed inset-x-0 bottom-0 z-40 flex flex-col rounded-t-2xl bg-popover shadow-2xl", isOpen && "translate-y-0")}>
+    <div className={cn("fixed inset-x-0 bottom-0 z-40 flex flex-col rounded-t-lg bg-chrome", isOpen && "translate-y-0")}>
       
       {/* 2. Mini Player Content (Visible only when closed) */}
       {!isOpen && (
@@ -24,7 +24,7 @@ export default function ExpandedPlayerBar({ isOpen, onClose }: ExpandedPlayerBar
         
         {/* Close Button */}
         {onClose && (
-          <button className="flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={onClose}>✕</button>
+          <button className="flex size-8 items-center justify-center rounded text-foreground transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={onClose}>✕</button>
         )}
 
         {/* Full Player Content */}

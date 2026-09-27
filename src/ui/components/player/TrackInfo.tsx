@@ -31,10 +31,10 @@ export function TrackInfo() {
       className="flex min-w-0 items-center gap-3"
       onContextMenu={(event) => openTrackMenu(event, currentTrack)}
     >
-      <TrackArtwork className="size-12 shrink-0 rounded-lg object-cover" size={48} artworkUrl={currentTrack.artworkUrl} iconSize={22} />
+      <TrackArtwork className="size-12 shrink-0 rounded object-cover" size={48} artworkUrl={currentTrack.artworkUrl} iconSize={22} />
       <div className="flex min-w-0 flex-col gap-0.5">
         <OverflowScrollText text={currentTrack.title} className="text-sm font-semibold text-foreground" />
-        <OverflowScrollText text={currentTrack.artist} className="text-xs font-normal text-muted-foreground">
+        <OverflowScrollText text={currentTrack.artist} className="text-[13px] font-normal text-muted-foreground">
           <ArtistLinks artists={currentTrack.artists} fallback={currentTrack.artist} />
         </OverflowScrollText>
       </div>
@@ -43,9 +43,8 @@ export function TrackInfo() {
         <button
           type="button"
           className={cn(
-            "group/like flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
+            "group/like flex size-9 shrink-0 items-center justify-center rounded text-foreground transition-colors hover:bg-card",
             "disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            isLiked ? "text-primary" : "text-muted-foreground hover:text-foreground",
           )}
           onClick={() => void toggleTrackLike(currentTrack)}
           disabled={isLikeStatusLoading || isLikePending}
@@ -67,21 +66,21 @@ export function TrackInfo() {
           }
         >
           {isLikeStatusLoading || isLikePending ? (
-            <SpinnerSteps size={18} color="currentColor" />
+            <SpinnerSteps size={20} color="currentColor" />
           ) : isLiked ? (
             // Hovering a liked track previews the un-like action.
-            <span className="relative grid size-[18px] place-items-center" aria-hidden="true">
+            <span className="relative grid size-5 place-items-center" aria-hidden="true">
               <HeartActiveIcon
-                size={18}
+                size={20}
                 className="absolute transition-opacity group-hover/like:opacity-0"
               />
               <HeartBrokenIcon
-                size={18}
+                size={20}
                 className="absolute opacity-0 transition-opacity group-hover/like:opacity-100"
               />
             </span>
           ) : (
-            <HeartIcon size={18} />
+            <HeartIcon size={20} />
           )}
         </button>
       )}

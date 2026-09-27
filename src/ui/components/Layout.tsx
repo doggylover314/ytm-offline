@@ -30,8 +30,8 @@ const SCROLLBAR_HIDE_DELAY_MS = 760;
 const MIN_SCROLLBAR_THUMB_HEIGHT = 34;
 const MAX_SCROLLBAR_THUMB_HEIGHT = 86;
 
-export function Layout({ 
-  children, 
+export function Layout({
+  children,
   showSearchBar,
   onOpenSearch,
   canGoBack,
@@ -41,7 +41,7 @@ export function Layout({
   fullBleedContent = false,
   showTransientScrollbar = false,
   rightPanel,
-  rightPanelWidth = 340,
+  rightPanelWidth = 360,
   scrollKey,
 }: LayoutProps) {
   const pageContentRef = useRef<HTMLDivElement>(null);
@@ -213,15 +213,11 @@ export function Layout({
   useEffect(() => () => clearScrollHideTimer(), [clearScrollHideTimer]);
 
   return (
-    <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background ">
-     
-
+    <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background">
       <div className="relative flex min-h-0 min-w-0 flex-1">
-        {/* No backdrop-blur: `bg-background` is fully opaque, so a backdrop filter here costs a
-            composited layer and a blur pass to render something nothing can see through. */}
-        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3 px-4 pt-3 bg-background rounded-tl-lg">
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-background">
           {showSearchBar && (
-            <div className="relative">
+            <div className="relative shrink-0 px-12 pt-7">
               <SearchBar
                 onOpen={onOpenSearch}
                 canGoBack={canGoBack}
@@ -232,13 +228,13 @@ export function Layout({
             </div>
           )}
 
-          <div className="relative flex min-h-0 min-w-0 flex-1 gap-3 pb-3 ">
+          <div className="relative flex min-h-0 min-w-0 flex-1">
             <div className="relative min-h-0 min-w-0 flex-1">
               <div
                 ref={pageContentRef}
                 className={cn(
-                  "h-full overflow-y-auto overscroll-contain rounded-xl ",
-                  fullBleedContent ? "p-0" : "p-4",
+                  "h-full overflow-y-auto overscroll-contain",
+                  fullBleedContent ? "p-0" : showSearchBar ? "px-12 pb-7 pt-8" : "px-12 py-7",
                 )}
                 data-page-scroll-root
               >
@@ -301,13 +297,13 @@ export function Layout({
                   }}
                   aria-hidden="true"
                 >
-                  <div className="relative mx-auto h-full w-1.5 rounded-full">
+                  <div className="relative mx-auto h-full w-1.5">
                     <div
                       className={cn(
-                        "w-full rounded-full transition-colors",
+                        "w-full rounded transition-colors",
                         isDraggingScrollbar
-                          ? "bg-foreground/50"
-                          : "bg-foreground/25 hover:bg-foreground/40",
+                          ? "bg-muted-foreground"
+                          : "bg-muted hover:bg-border",
                       )}
                       ref={scrollbarThumbRef}
                       data-scrollbar-thumb
@@ -326,46 +322,45 @@ export function Layout({
           </div>
         </div>
 
- <AnimatePresence initial={false}>
-              {rightPanel && (
-                <motion.div
-                  ref={rightPanelRef}
-                  initial={{ width: 0, opacity: 0 }}
-                  animate={{ width: rightPanelWidth, opacity: 1 }}
-                  exit={{ width: 0, opacity: 0 }}
-                  /*
-                   * A tween, not a spring, and `width` gets its own shorter one than `opacity`.
-                   *
-                   * `width` is a layout property — every frame Framer emits for it costs a real
-                   * synchronous browser layout, not a compositor-only step like `x` or
-                   * `opacity` would. A spring has no fixed end time; it keeps emitting
-                   * low-amplitude correction frames well past the point it looks finished,
-                   * which was still paying for a layout pass on each one. A tween has a hard
-                   * stop at `duration`, so the frame count — and the reflow cost — is bounded
-                   * and known. Opacity gets a hair longer so the fade reads as settling into
-                   * the now-correctly-sized box rather than racing to beat it there.
-                   */
-                  transition={{
-                    width: { duration: 0.22, ease: [0.16, 1, 0.3, 1] },
-                    opacity: { duration: 0.16, ease: "easeOut" },
-                  }}
-                  className="relative min-h-0 shrink-0 overflow-hidden bg-card"
-                >
-                  {/*
-                    Pinned to the target width, not 100%: this box's *wrapper* is what's
-                    animating. If the queue list tracked that width instead, every row's flex
-                    layout and text truncation would recompute on every animation frame — for a
-                    25+ row queue that's the actual cost behind a "laggy" close. Fixed width
-                    means the wrapper's shrinking `overflow-hidden` clip is the only thing that
-                    changes per frame; the panel's own layout is computed once.
-                  */}
-                  <div className="h-full" style={{ width: rightPanelWidth }}>
-                    {rightPanel}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
+        <AnimatePresence initial={false}>
+          {rightPanel && (
+            <motion.div
+              ref={rightPanelRef}
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: rightPanelWidth, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              /*
+               * A tween, not a spring, and `width` gets its own shorter one than `opacity`.
+               *
+               * `width` is a layout property — every frame Framer emits for it costs a real
+               * synchronous browser layout, not a compositor-only step like `x` or
+               * `opacity` would. A spring has no fixed end time; it keeps emitting
+               * low-amplitude correction frames well past the point it looks finished,
+               * which was still paying for a layout pass on each one. A tween has a hard
+               * stop at `duration`, so the frame count — and the reflow cost — is bounded
+               * and known. Opacity gets a hair longer so the fade reads as settling into
+               * the now-correctly-sized box rather than racing to beat it there.
+               */
+              transition={{
+                width: { duration: 0.22, ease: [0.16, 1, 0.3, 1] },
+                opacity: { duration: 0.16, ease: "easeOut" },
+              }}
+              className="relative min-h-0 shrink-0 overflow-hidden bg-chrome"
+            >
+              {/*
+                Pinned to the target width, not 100%: this box's *wrapper* is what's
+                animating. If the queue list tracked that width instead, every row's flex
+                layout and text truncation would recompute on every animation frame — for a
+                25+ row queue that's the actual cost behind a "laggy" close. Fixed width
+                means the wrapper's shrinking `overflow-hidden` clip is the only thing that
+                changes per frame; the panel's own layout is computed once.
+              */}
+              <div className="h-full" style={{ width: rightPanelWidth }}>
+                {rightPanel}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

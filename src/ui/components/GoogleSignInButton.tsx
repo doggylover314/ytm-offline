@@ -17,22 +17,17 @@ interface GoogleSignInButtonProps {
    * gives sighted users the same on hover.
    */
   iconOnly?: boolean;
-  size?: "sm" | "md";
+  /** `lg` is the 44px welcome-screen button. */
+  size?: "sm" | "md" | "lg";
   className?: string;
 }
 
 /**
  * The one sign-in button, used everywhere signing in is offered.
  *
- * It was three separate buttons — a brand-red pill in the sidebar, a primary `Button` in the
- * title-bar panel, and a third in settings with a generic login glyph — which meant the most
- * consequential action in the app looked like three different actions. Signing in hands
- * credentials to Google's own page, so it should look like what it is, and look the same
- * everywhere it is offered.
- *
- * Deliberately not brand-red: the surface is white (or near-black in dark mode) with the
- * four-colour G, which is the convention every Google sign-in button follows and the reason
- * this one is instantly recognisable as safe rather than as one more red button in a red app.
+ * It was three separate buttons, which made the most consequential action in the app look like
+ * three different actions. It is now the design's primary button (white, dark label) with
+ * Google's four-colour G, which is specified against white and reads as the Google mark at 18px.
  */
 export function GoogleSignInButton({
   onClick,
@@ -43,7 +38,7 @@ export function GoogleSignInButton({
   size = "md",
   className,
 }: GoogleSignInButtonProps) {
-  const glyphSize = size === "sm" ? 15 : 17;
+  const glyphSize = size === "sm" ? 15 : 18;
 
   return (
     <button
@@ -54,19 +49,20 @@ export function GoogleSignInButton({
       aria-label="Sign in with Google"
       title="Sign in with Google"
       className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded-full font-medium",
-        "transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "inline-flex shrink-0 items-center justify-center rounded font-medium",
+        "bg-foreground text-background transition-colors hover:bg-white",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         "disabled:pointer-events-none disabled:opacity-60",
-        /*
-         * A fixed light surface in both themes, and the one place in the app that is not a
-         * token. Google's mark is specified against white; on a dark card the G's blue and
-         * green lose enough contrast to stop reading as the Google mark at 18px.
-         */
-        "bg-white text-[#1f1f1f] shadow-sm ring-1 ring-black/10 hover:bg-white/90",
         iconOnly
-          // Square so it stays a circle, and sized to match the rail's other icon buttons.
-          ? (size === "sm" ? "size-9" : "size-10")
-          : cn("gap-2.5", size === "sm" ? "px-3.5 py-1.5 text-sm" : "px-5 py-2.5 text-sm"),
+          ? (size === "sm" ? "size-8" : size === "lg" ? "size-11" : "size-9")
+          : cn(
+              "gap-2",
+              size === "sm"
+                ? "h-8 px-3 text-sm"
+                : size === "lg"
+                  ? "h-11 px-5 text-[15px]"
+                  : "h-9 pl-3 pr-4 text-sm",
+            ),
         fullWidth && !iconOnly && "w-full",
         className,
       )}

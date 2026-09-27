@@ -1,24 +1,16 @@
 "use client";
 
-import {
-  AnimatePresence,
-  motion,
-  useReducedMotion,
-  type HTMLMotionProps,
-} from "motion/react";
-import {
-  forwardRef,
-  type PointerEvent,
-  type ReactNode,
-  useCallback,
-  useRef,
-  useState,
-} from "react";
-import { EASE_OUT, SPRING_PRESS } from "@/lib/ease";
+import { motion, type HTMLMotionProps } from "motion/react";
+import { forwardRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { useHoverCapable } from "@/lib/hooks/use-hover-capable";
 
-export type ButtonVariant = "primary" | "secondary" | "ghost" | "outline";
+export type ButtonVariant =
+  | "primary"
+  | "secondary"
+  | "ghost"
+  | "plain"
+  | "outline"
+  | "destructive";
 export type ButtonSize = "sm" | "md" | "lg" | "icon";
 
 export interface ButtonProps extends Omit<
@@ -27,27 +19,27 @@ export interface ButtonProps extends Omit<
 > {
   variant?: ButtonVariant;
   size?: ButtonSize;
+  /** No-op; kept so existing callers compile. Buttons have no press scaling. */
   pressScale?: number;
-  /** Spawn a Material-style ripple from the press point. Off by default. */
+  /** No-op; kept so existing callers compile. Buttons have no ripple. */
   ripple?: boolean;
   children?: ReactNode;
 }
 
-type Ripple = { id: number; x: number; y: number; size: number };
-
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
-  primary: "bg-primary text-primary-foreground hover:bg-primary/90",
-  secondary: "bg-card text-foreground",
-  ghost: "text-muted-foreground hover:text-foreground hover:bg-primary/5",
-  outline:
-    "bg-transparent text-foreground hover:bg-primary/5",
+  primary: "bg-foreground text-background hover:bg-white",
+  secondary: "bg-muted text-foreground hover:bg-border",
+  ghost: "bg-transparent text-foreground hover:bg-card",
+  plain: "bg-transparent text-foreground hover:bg-card",
+  outline: "bg-transparent text-foreground hover:bg-card",
+  destructive: "bg-muted text-destructive hover:bg-border",
 };
 
 const SIZE_CLASS: Record<ButtonSize, string> = {
-  sm: "h-8 px-3 text-xs gap-1.5 rounded-full",
-  md: "h-10 px-5 text-sm gap-2 rounded-full",
-  lg: "h-12 px-6 text-base gap-2 rounded-full",
-  icon: "h-8 w-8 rounded-lg",
+  sm: "h-8 px-3 text-[13px] gap-1.5",
+  md: "h-9 px-4 text-sm gap-1.5",
+  lg: "h-10 px-5 text-sm gap-2",
+  icon: "size-9 p-0",
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
@@ -55,87 +47,28 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     {
       variant = "primary",
       size = "md",
-      pressScale = 0.93,
-      ripple = false,
+      pressScale: _pressScale,
+      ripple: _ripple,
       className,
       children,
-      onPointerDown,
       ...rest
     },
     ref,
   ) {
-    const reduce = useReducedMotion();
-    const canHover = useHoverCapable();
-    const [ripples, setRipples] = useState<Ripple[]>([]);
-    const nextId = useRef(0);
-
-    const handlePointerDown = useCallback(
-      (event: PointerEvent<HTMLButtonElement>) => {
-        if (ripple && !reduce) {
-          const rect = event.currentTarget.getBoundingClientRect();
-          const size = Math.max(rect.width, rect.height) * 2;
-          const id = nextId.current++;
-          setRipples((prev) => [
-            ...prev,
-            {
-              id,
-              x: event.clientX - rect.left,
-              y: event.clientY - rect.top,
-              size,
-            },
-          ]);
-        }
-        onPointerDown?.(event);
-      },
-      [ripple, reduce, onPointerDown],
-    );
-
     return (
       <motion.button
         ref={ref}
         type="button"
-        whileTap={reduce ? undefined : { scale: pressScale }}
-        whileHover={reduce || !canHover ? undefined : { scale: 1.02 }}
-        transition={SPRING_PRESS}
-        onPointerDown={handlePointerDown}
         className={cn(
-          "inline-flex items-center justify-center font-medium select-none",
-          "transition-colors",
+          "inline-flex shrink-0 select-none items-center justify-center rounded-[4px] font-medium outline-none transition-colors duration-150",
+          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground",
           "disabled:pointer-events-none disabled:opacity-50",
-          ripple && "relative overflow-hidden",
           VARIANT_CLASS[variant],
           SIZE_CLASS[size],
           className,
         )}
         {...rest}
       >
-        {ripple && !reduce ? (
-          <span className="pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]">
-            <AnimatePresence>
-              {ripples.map((r) => (
-                <motion.span
-                  key={r.id}
-                  className="absolute rounded-full bg-current"
-                  style={{
-                    left: r.x,
-                    top: r.y,
-                    width: r.size,
-                    height: r.size,
-                    x: "-50%",
-                    y: "-50%",
-                  }}
-                  initial={{ scale: 0.05, opacity: 0.3 }}
-                  animate={{ scale: 1, opacity: 0 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 1.6, ease: EASE_OUT }}
-                  onAnimationComplete={() =>
-                    setRipples((prev) => prev.filter((x) => x.id !== r.id))
-                  }
-                />
-              ))}
-            </AnimatePresence>
-          </span>
-        ) : null}
         {children}
       </motion.button>
     );

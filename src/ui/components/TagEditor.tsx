@@ -47,9 +47,9 @@ const FIELDS: Array<{
 ];
 
 const FIELD =
-  "w-full min-w-0 rounded-lg bg-background px-2.5 py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:ring-1 focus:ring-inset focus:ring-border";
+  "h-9 w-full min-w-0 rounded bg-background px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-inset focus:ring-ring";
 const GHOST_BUTTON =
-  "rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "h-8 rounded px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function toDataUrl(artwork: LocalArtwork): string {
   return `data:${artwork.mimeType};base64,${artwork.dataBase64}`;
@@ -179,7 +179,7 @@ export function TagEditor({
 
   return (
     <div
-      className="fixed inset-0 z-[70] grid place-items-center bg-background/70 p-6 backdrop-blur-sm"
+      className="fixed inset-0 z-[70] grid place-items-center p-6"
       role="dialog"
       aria-modal="true"
       aria-label={`Edit tags for ${track.title}`}
@@ -197,11 +197,11 @@ export function TagEditor({
         }
       }}
     >
-      <div className="flex w-full max-w-lg flex-col gap-4 rounded-2xl bg-popover p-5 shadow-2xl ring-1 ring-border">
+      <div className="flex w-full max-w-lg flex-col gap-4 rounded-lg border border-border bg-card p-6">
         <header className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 flex-col">
-            <h2 className="text-base font-semibold text-foreground">Edit tags</h2>
-            <p className="truncate text-xs text-muted-foreground" title={track.localPath}>
+            <h2 className="text-lg font-semibold text-foreground">Edit tags</h2>
+            <p className="truncate font-mono text-xs text-muted-foreground" title={track.localPath}>
               {track.localPath}
             </p>
           </div>
@@ -209,7 +209,7 @@ export function TagEditor({
             type="button"
             onClick={requestClose}
             aria-label="Close"
-            className="grid size-8 shrink-0 place-items-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="grid size-8 shrink-0 place-items-center rounded text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <CloseIcon size={18} />
           </button>
@@ -223,7 +223,7 @@ export function TagEditor({
         ) : tags === null ? null : (
           <div className="flex gap-4">
             <div className="flex shrink-0 flex-col items-center gap-2">
-              <div className="grid size-28 place-items-center overflow-hidden rounded-xl bg-card text-muted-foreground">
+              <div className="grid size-28 place-items-center overflow-hidden rounded-lg bg-muted text-foreground">
                 {coverUrl ? (
                   <img src={coverUrl} alt="" className="size-full object-cover" />
                 ) : (
@@ -304,7 +304,7 @@ export function TagEditor({
             type="button"
             onClick={requestClose}
             disabled={saving}
-            className="rounded-full px-4 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-9 rounded px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Cancel
           </button>
@@ -312,7 +312,7 @@ export function TagEditor({
             type="button"
             disabled={saving || tags === null || !isDirty}
             onClick={() => void save()}
-            className="rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-transform hover:scale-[1.02] active:scale-95 disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-9 rounded bg-foreground px-4 text-sm font-medium text-background transition-colors hover:bg-white disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {saving ? "Saving..." : "Save to file"}
           </button>

@@ -1,4 +1,3 @@
-// beui.dev/components/motion/marquee
 import { Children, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
@@ -9,6 +8,7 @@ export interface MarqueeProps {
   pauseOnHover?: boolean;
   gap?: string;
   className?: string;
+  /** Soften the edges with a mask. Off by default: the design has no gradients. */
   fade?: boolean;
 }
 
@@ -19,7 +19,7 @@ export function Marquee({
   pauseOnHover = true,
   gap = "1rem",
   className,
-  fade = true,
+  fade = false,
 }: MarqueeProps) {
   const vertical = direction === "up" || direction === "down";
   const reverse = direction === "right" || direction === "down";

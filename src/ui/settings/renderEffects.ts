@@ -57,19 +57,9 @@ export const RENDER_EFFECTS = [
     description: "Box and text shadows.",
   },
   {
-    id: "ambient",
-    label: "Ambient artwork layers",
-    description: "The oversized blurred cover behind the page and the lyrics screen.",
-  },
-  {
-    id: "lyrics-drift",
-    label: "Lyrics parallax drift",
-    description: "The 44s scale-and-pan on the lyrics backdrop.",
-  },
-  {
     id: "visualizer",
     label: "Visualisers and loaders",
-    description: "The playing-row bars and the bouncing audio loader.",
+    description: "The playing-row bars and the loading indicator.",
   },
   {
     id: "marquee",

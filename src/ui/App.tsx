@@ -368,7 +368,7 @@ export default function App() {
     () => restoredSession?.nextTabId ?? 2,
   );
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const [queuePanelWidth, setQueuePanelWidth] = useState(340);
+  const [queuePanelWidth, setQueuePanelWidth] = useState(360);
   const isQueuePanelCollapsed = useQueuePanelCollapsed();
   const [loadingScreenState, setLoadingScreenState] = useState<"visible" | "leaving" | "hidden">("visible");
   const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(() =>
@@ -855,7 +855,7 @@ export default function App() {
     setTabs([{ id: "1", view: "home" }]);
     setActiveTabId("1");
     setNextTabId(2);
-    setQueuePanelWidth(340);
+    setQueuePanelWidth(360);
     clearAppSession();
 
     const results = await Promise.allSettled([
@@ -1429,12 +1429,6 @@ export default function App() {
     const timer = window.setTimeout(() => setShowOnboardingComplete(false), 3400);
     return () => window.clearTimeout(timer);
   }, [showOnboardingComplete]);
-
-  useEffect(() => {
-    if (!showOnboardingWelcome || loadingScreenState !== "hidden") return;
-    const timer = window.setTimeout(() => setShowOnboardingWelcome(false), 2600);
-    return () => window.clearTimeout(timer);
-  }, [loadingScreenState, showOnboardingWelcome]);
 
   useEffect(() => {
     if (
@@ -2091,6 +2085,8 @@ useEffect(() => {
                 onOpenArtist={(artist) => handleNavigateArtist(artist)}
                 onOpenAlbum={handleNavigateAlbum}
                 onOpenPlaylist={handleNavigatePlaylist}
+                onBack={canNavigateBack ? handleNavigateBack : undefined}
+                onEditSearch={() => setIsSearchOpen(true)}
                 />
             )}
             {activeTab?.view === "library" && (
@@ -2201,7 +2197,15 @@ useEffect(() => {
       ) : (
         <>
           {loadingScreenState === "hidden" && showOnboardingWelcome && (
-            <OnboardingWelcome />
+            <OnboardingWelcome
+              isSigningIn={libraryState.authProgress != null}
+              onSignIn={() => {
+                void handleSignIn().then(() => {
+                  if (libraryController.getState().status === "ready") setShowOnboardingWelcome(false);
+                });
+              }}
+              onContinue={() => setShowOnboardingWelcome(false)}
+            />
           )}
           {loadingScreenState === "hidden" && onboardingComplete === false && !showOnboardingWelcome && onboardingStep && (
             <Onboarding

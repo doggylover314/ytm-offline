@@ -31,27 +31,17 @@ import {
 } from "@/components/motion/select";
 import {
   BugIcon,
-  DownloadIcon,
-  EqualizerIcon,
   FolderAddIcon,
   FolderIcon,
   FolderOpenIcon,
-  KeyIcon,
   LastFmIcon,
   LogFileIcon,
   LogoutIcon,
-  LyricsIcon,
-  PaletteIcon,
-  PlayIcon,
-  QueuePanelIcon,
   RefreshIcon,
-  SettingsIcon,
   StarIcon,
   TrashIcon,
-  UserIcon,
 } from "@/ui/icons";
-import { motion } from "motion/react";
-import { setAccentColor, useAccentColor } from "../settings/accent";
+import { ACCENT_PRESETS, setAccentColor, useAccentColor } from "../settings/accent";
 import { cn } from "@/lib/utils";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -117,10 +107,8 @@ import {
 import {
   setForceWindowControls,
   setNativeWindowControls,
-  setWindowsStyleWindowControls,
   useForceWindowControls,
   useNativeWindowControls,
-  useWindowsStyleWindowControls,
 } from "../settings/windowControls";
 import {
   resetMiniPlayerPosition,
@@ -201,22 +189,27 @@ import {
   useOfflineState,
 } from "../../player/offlineStore";
 
-
-
-
 /*
- * Label + description pair used by every settings row.
- *
- * `flex flex-col` is the load-bearing part: both children are inline elements, so without a
- * block/flex wrapper the description runs straight on from the label ("Scrobble playsSend
- * now playing updates...") — the CSS Modules used to stack them and the Tailwind migration
- * dropped it.
+ * Layout, from the approved design: each section is a title over a stack of rows, 2px apart,
+ * in a 6px-cornered group. A row is chrome grey with its label on the left and control on the
+ * right. The group does not clip (`overflow-hidden` would cut off Select menus, which drop
+ * down inside the row), so its first and last rows round their own outer corners.
  */
-const SETTING_LABEL =
-  "flex flex-col gap-0.5 text-sm text-muted-foreground [&>strong]:text-sm [&>strong]:font-medium [&>strong]:text-foreground";
+const SETTINGS_GROUP =
+  "flex flex-col gap-0.5 [&>*:first-child]:rounded-t-lg [&>*:last-child]:rounded-b-lg";
+const SETTINGS_ROW = "flex flex-col gap-3 bg-chrome px-5 py-4";
+const ROW_TITLE = "text-sm font-semibold text-foreground";
+const ROW_DESCRIPTION = "text-[13px] text-muted-foreground";
+const ROW_ERROR = "text-[13px] text-destructive";
 
-/** Section card. One shape for every group so the page reads as a single system. */
-const SETTINGS_CARD = "flex flex-col gap-5 rounded-2xl bg-card/50 p-6";
+const BUTTON_BASE =
+  "flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded px-4 text-sm font-medium transition-colors has-[svg]:pl-3 disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+const BUTTON_PRIMARY = cn(BUTTON_BASE, "bg-foreground text-background hover:bg-white");
+const BUTTON_SECONDARY = cn(BUTTON_BASE, "bg-muted text-foreground hover:bg-border");
+const BUTTON_PLAIN = cn(BUTTON_BASE, "text-foreground hover:bg-card");
+const BUTTON_DESTRUCTIVE = cn(BUTTON_BASE, "bg-muted text-destructive hover:bg-border");
+const ICON_BUTTON =
+  "grid size-9 shrink-0 place-items-center rounded text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 /**
  * How long ago YouTube last answered as this account, in words.
@@ -233,41 +226,75 @@ function formatSessionAge(confirmedAt: number | null): string {
   return `${hours} hour${hours === 1 ? "" : "s"} ago`;
 }
 
-/**
- * Text field. Preflight strips the browser's default input chrome, and these two fields were
- * left bare by the CSS Modules migration — they rendered as invisible text on the card.
- */
+/** Text field, sunk into the row: page black on chrome grey. */
 const SETTINGS_FIELD =
-  "min-w-0 rounded-lg bg-background px-2.5 py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-inset focus:ring-ring/60";
+  "h-9 min-w-0 rounded bg-background px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-inset focus:ring-ring";
 
-/** The equaliser card. The switch is a bypass: off dims the curve but leaves it editable. */
+/** A number field with its unit, e.g. "GB", inside the same sunken box. */
+const UNIT_FIELD =
+  "flex h-9 w-[120px] items-center gap-1.5 rounded bg-background px-3 text-sm text-foreground focus-within:ring-2 focus-within:ring-inset focus-within:ring-ring";
+
+/**
+ * One section: a title and its group of rows. The first section on a page carries the page's
+ * 32px title; the rest are 24px.
+ */
+function SettingsSection({
+  id,
+  title,
+  first = false,
+  note,
+  children,
+}: {
+  id: string;
+  title: string;
+  first?: boolean;
+  /** A line under the group that applies to all of it. */
+  note?: ReactNode;
+  children: ReactNode;
+}) {
+  const Heading = first ? "h1" : "h2";
+  return (
+    <section className="flex flex-col gap-4" aria-labelledby={id}>
+      <Heading
+        id={id}
+        className={cn(
+          "font-semibold text-foreground",
+          first ? "text-[32px] leading-tight" : "text-2xl",
+        )}
+      >
+        {title}
+      </Heading>
+      <div className={SETTINGS_GROUP}>{children}</div>
+      {note ? <p className={ROW_DESCRIPTION}>{note}</p> : null}
+    </section>
+  );
+}
+
+/** The equaliser row. The switch is a bypass: off dims the curve but leaves it editable. */
 function EqualizerSettings({ engineMode }: { engineMode: AudioEngineMode }) {
   const enabled = useEqualizerEnabled();
   // Only the Rust engine has the samples; the YouTube fallback plays unequalised.
   const available = engineMode === "rust";
 
   return (
-    <section className={SETTINGS_CARD} aria-labelledby="equalizer-settings-title">
-      <SettingsCardHeader
-        title="Equaliser"
-        titleId="equalizer-settings-title"
-        icon={<EqualizerIcon size={18} aria-hidden="true" />}
-        description={
-          available
-            ? "Ten bands, shaped live on the track that is playing."
-            : "Needs the Rust playback method."
-        }
-        status={
-          <Switch
-            checked={enabled}
-            onCheckedChange={setEqualizerEnabled}
-            disabled={!available}
-            aria-labelledby="equalizer-settings-title"
-          />
-        }
-      />
-      <EqualizerPanel disabled={!available} />
-    </section>
+    <SettingRow
+      title="Equaliser"
+      description={
+        available
+          ? "Ten bands, shaped live on the track that is playing."
+          : "Needs the Rust playback method."
+      }
+      below={<EqualizerPanel disabled={!available} />}
+    >
+      {(labelId) => (
+        <Switch
+          checked={enabled}
+          onCheckedChange={setEqualizerEnabled}
+          disabled={!available}
+          aria-labelledby={labelId}
+        />
+      )}
+    </SettingRow>
   );
 }
 
@@ -327,49 +354,50 @@ function OutputDeviceSetting({ engineMode }: { engineMode: AudioEngineMode }) {
 }
 
 /**
- * One settings row: label and description on the left, control on the right.
+ * One settings row: label and description on the left, control on the right, and optionally
+ * more content (an error, an expanded editor) underneath inside the same row.
  *
- * The wrapper is a `div`, not a `label`, because the controls are now buttons
- * (`role="switch"`, `role="listbox"`) rather than native inputs — a button inside a label
- * gets its activation swallowed by the label's own click forwarding. The association is made
- * explicitly instead, via `aria-labelledby` on the control, so screen readers still announce
- * the row title when the control takes focus.
+ * The wrapper is a `div`, not a `label`, because the controls are buttons (`role="switch"`,
+ * `role="listbox"`) rather than native inputs — a button inside a label gets its activation
+ * swallowed by the label's own click forwarding. The association is made explicitly instead,
+ * via `aria-labelledby` on the control, so screen readers still announce the row title when
+ * the control takes focus.
  */
 function SettingRow({
   title,
   description,
   disabled,
+  below,
   children,
 }: {
-  title: string;
+  title: ReactNode;
   description?: ReactNode;
   disabled?: boolean;
+  below?: ReactNode;
   /** Receives the id of the row title so the control can point `aria-labelledby` at it. */
-  children: (labelId: string) => ReactNode;
+  children?: (labelId: string) => ReactNode;
 }) {
   const labelId = useId();
   return (
-    <div
-      className={cn(
-        "flex items-start justify-between gap-6 py-2.5",
-        disabled && "pointer-events-none opacity-50",
-      )}
-    >
-      <span className="flex min-w-0 flex-col gap-0.5">
-        <span id={labelId} className="text-sm font-medium text-foreground">
-          {title}
+    <div className={cn(SETTINGS_ROW, disabled && "pointer-events-none opacity-50")}>
+      <div className="flex items-center justify-between gap-4">
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span id={labelId} className={ROW_TITLE}>
+            {title}
+          </span>
+          {description ? <span className={ROW_DESCRIPTION}>{description}</span> : null}
         </span>
-        {description ? (
-          <span className="text-sm text-muted-foreground">{description}</span>
+        {children ? (
+          <span className="flex shrink-0 items-center gap-2">{children(labelId)}</span>
         ) : null}
-      </span>
-      <span className="flex shrink-0 items-center gap-2 pt-0.5">{children(labelId)}</span>
+      </div>
+      {below}
     </div>
   );
 }
 
 /**
- * The Motion & performance card's contents.
+ * The Motion & performance rows.
  *
  * One switch for the blunt version, and a Manage disclosure for the eleven behind it. The
  * individual switches are a debugging instrument — you flip one, watch the GPU, flip it back —
@@ -393,7 +421,7 @@ function PotatoPcSettings() {
               onClick={() => setIsManaging((current) => !current)}
               aria-expanded={isManaging}
               aria-controls={panelId}
-              className="rounded-full px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-card hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className={BUTTON_PLAIN}
             >
               {isManaging ? "Done" : "Manage"}
             </button>
@@ -407,8 +435,8 @@ function PotatoPcSettings() {
       </SettingRow>
 
       {isManaging && (
-        <div id={panelId} className="flex flex-col">
-          <p className="pb-1 pt-2 text-sm text-muted-foreground">
+        <div id={panelId} className="flex flex-col gap-0.5 [&>*:last-child]:rounded-b-lg">
+          <p className={cn(SETTINGS_ROW, ROW_DESCRIPTION)}>
             One switch per effect. Turn them off one at a time to find which one your machine is
             paying for.
           </p>
@@ -460,15 +488,17 @@ function SettingToggle({
   checked,
   onCheckedChange,
   disabled,
+  below,
 }: {
   title: string;
   description?: ReactNode;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   disabled?: boolean;
+  below?: ReactNode;
 }) {
   return (
-    <SettingRow title={title} description={description} disabled={disabled}>
+    <SettingRow title={title} description={description} disabled={disabled} below={below}>
       {(labelId) => (
         <Switch
           checked={checked}
@@ -482,67 +512,97 @@ function SettingToggle({
 }
 
 /**
- * Header for a settings card: icon, title and description on the left, status on the right.
- *
- * The four cards each rolled their own, and three of them put the status chip immediately
- * after the description inside a plain `flex gap-3` — so "Signed out" read as part of the
- * sentence rather than as the card's state. `justify-between` plus a `min-w-0 flex-1` text
- * column is what actually pins it to the right edge and truncates instead of overflowing.
+ * Accent colour: the design's seven swatches, plus a Custom button over the native colour
+ * picker so a colour chosen before the swatches existed can still be kept or changed.
  */
-function SettingsCardHeader({
-  title,
-  titleId,
-  description,
-  icon,
-  status,
-}: {
-  title: string;
-  titleId: string;
-  description: ReactNode;
-  icon?: ReactNode;
-  /** Right-aligned state, e.g. "Connected". */
-  status?: ReactNode;
-}) {
+function AccentColorSetting() {
+  const accentColor = useAccentColor();
+  const current = accentColor.toLowerCase();
+  const isCustom = !ACCENT_PRESETS.some((preset) => preset.value === current);
+
   return (
-    <div className="flex items-center justify-between gap-3">
-      {icon ? (
-        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/15 text-primary">
-          {icon}
-        </span>
-      ) : null}
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <h2 id={titleId} className="text-lg font-semibold text-foreground">
-          {title}
-        </h2>
-        <p className="text-sm text-muted-foreground">{description}</p>
-      </div>
-      {status ? <span className="shrink-0 text-sm">{status}</span> : null}
-    </div>
+    <SettingRow title="Accent colour" description="Used for progress bars and switches.">
+      {(labelId) => (
+        <>
+          <div role="radiogroup" aria-labelledby={labelId} className="flex items-center">
+            {ACCENT_PRESETS.map((preset) => {
+              const selected = preset.value === current;
+              return (
+                /* The selected swatch gets a 2px page-black gap and a 2px white edge. Drawn with
+                   a border and padding rather than a ring: rings are box-shadows, which the
+                   Potato PC "shadows" switch removes. */
+                <button
+                  key={preset.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  aria-label={preset.name}
+                  title={preset.name}
+                  onClick={() => setAccentColor(preset.value)}
+                  className={cn(
+                    "grid size-9 place-items-center rounded-lg border-2 p-[2px]",
+                    selected ? "border-foreground bg-background" : "border-transparent",
+                  )}
+                >
+                  <span className="size-7 rounded" style={{ background: preset.value }} />
+                </button>
+              );
+            })}
+          </div>
+          <label
+            className={cn(
+              BUTTON_SECONDARY,
+              "relative ml-2 cursor-pointer focus-within:ring-2 focus-within:ring-inset focus-within:ring-ring",
+            )}
+            title="Pick any colour"
+          >
+            {isCustom && (
+              <span
+                className="size-3.5 rounded-[2px]"
+                style={{ background: accentColor }}
+                aria-hidden="true"
+              />
+            )}
+            {isCustom ? accentColor.toUpperCase() : "Custom…"}
+            <input
+              type="color"
+              value={accentColor}
+              onChange={(event) => setAccentColor(event.target.value)}
+              aria-label="Custom accent colour"
+              className="absolute inset-0 size-full cursor-pointer opacity-0"
+            />
+          </label>
+        </>
+      )}
+    </SettingRow>
   );
 }
 
-/** Quiet outbound links in the page header. */
-type SettingsTab = "about" | "appearance" | "playback" | "system" | "shortcuts" | "window";
+type SettingsTab =
+  | "account"
+  | "playback"
+  | "downloads"
+  | "lyrics"
+  | "library"
+  | "appearance"
+  | "window"
+  | "shortcuts"
+  | "integrations"
+  | "about";
 
-type WindowControlStyle = "macos" | "windows" | "native";
+type WindowControlStyle = "app" | "native";
 
-const SETTINGS_TABS: Array<{
-  id: SettingsTab;
-  label: string;
-  description: string;
-  icon: typeof UserIcon;
-}> = [
-  { id: "about", label: "Account", description: "Sign-in, integrations, updates", icon: UserIcon },
-  { id: "appearance", label: "Appearance", description: "Theme and motion", icon: PaletteIcon },
-  {
-    id: "playback",
-    label: "Playback",
-    description: "Transitions and session",
-    icon: PlayIcon,
-  },
-  { id: "system", label: "Library", description: "Cache and local files", icon: FolderIcon },
-  { id: "window", label: "Window", description: "Chrome and mini player", icon: QueuePanelIcon },
-  { id: "shortcuts", label: "Shortcuts", description: "Keyboard bindings", icon: KeyIcon },
+const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
+  { id: "account", label: "Account" },
+  { id: "playback", label: "Playback" },
+  { id: "downloads", label: "Downloads" },
+  { id: "lyrics", label: "Lyrics" },
+  { id: "library", label: "Local files" },
+  { id: "appearance", label: "Appearance" },
+  { id: "window", label: "Window" },
+  { id: "shortcuts", label: "Shortcuts" },
+  { id: "integrations", label: "Integrations" },
+  { id: "about", label: "About" },
 ];
 
 interface SettingsPageProps {
@@ -587,8 +647,7 @@ export function SettingsPage({
   const [lastFmAuth, setLastFmAuth] = useState<LastFmAuthStart | null>(null);
   const [lastFmBusy, setLastFmBusy] = useState(false);
   const [lastFmError, setLastFmError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<SettingsTab>("about");
-  const accentColor = useAccentColor();
+  const [activeTab, setActiveTab] = useState<SettingsTab>("account");
   const [listeningShortcut, setListeningShortcut] = useState<KeyboardShortcutAction | null>(null);
   const keyboardShortcuts = useKeyboardShortcuts();
   const miniPlayerEnabled = useMiniPlayerEnabled();
@@ -605,7 +664,6 @@ export function SettingsPage({
   const sessionRestoreEnabled = useSessionRestoreEnabled();
   const extraPlayerControlsAlwaysVisible = useExtraPlayerControlsAlwaysVisible();
   const compactPlayerBar = useCompactPlayerBar();
-  const windowsStyleWindowControls = useWindowsStyleWindowControls();
   const nativeWindowControls = useNativeWindowControls();
   const forceWindowControls = useForceWindowControls();
   const tilingWindowManager = useSyncExternalStore(
@@ -613,20 +671,13 @@ export function SettingsPage({
     isTilingWindowManager,
     () => false,
   );
-  // "Native" and "Windows-style" used to be two separate switches, one of which only meant
-  // anything when the other was off. Collapsing them into one three-way pick removes the
-  // combination that did nothing (native + windows-style both on).
-  const windowControlStyle: WindowControlStyle = nativeWindowControls
-    ? "native"
-    : windowsStyleWindowControls ? "windows" : "macos";
+  const windowControlStyle: WindowControlStyle = nativeWindowControls ? "native" : "app";
   const handleWindowControlStyleChange = (style: WindowControlStyle) => {
     const goingNative = style === "native";
-    if (goingNative !== nativeWindowControls) {
-      setNativeWindowControls(goingNative);
-      // GTK decorations don't reliably flip live on Linux, so this style needs a fresh window.
-      if (isLinux) void relaunch().catch(() => window.location.reload());
-    }
-    if (!goingNative) setWindowsStyleWindowControls(style === "windows");
+    if (goingNative === nativeWindowControls) return;
+    setNativeWindowControls(goingNative);
+    // GTK decorations don't reliably flip live on Linux, so this style needs a fresh window.
+    if (isLinux) void relaunch().catch(() => window.location.reload());
   };
   const mainWindowGeometryPersistenceEnabled = useMainWindowGeometryPersistenceEnabled();
   const minimizeToTray = useMinimizeToTray();
@@ -957,123 +1008,66 @@ export function SettingsPage({
     return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
   };
 
+  const downloadedCount = Object.keys(offlineState.entries).length;
+  const activeTabLabel = SETTINGS_TABS.find((tab) => tab.id === activeTab)?.label ?? "Settings";
+
   return (
-    <main className="flex min-h-0 flex-1 flex-col gap-7">
-      <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-        <div className="flex flex-col gap-1.5">
-          <h1>Settings</h1>
-          <p className="text-sm text-muted-foreground">
-            Manage your account, library, appearance, and window behaviour.
-          </p>
-        </div>
+    <main className="flex min-h-0 flex-1 items-start">
+      {/* The nav sticks so the sections stay reachable while a long panel scrolls. */}
+      <nav
+        className="sticky top-0 flex w-[240px] shrink-0 flex-col gap-0.5 px-4 py-8"
+        role="tablist"
+        aria-label="Settings sections"
+        aria-orientation="vertical"
+      >
+        {SETTINGS_TABS.map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => setActiveTab(tab.id)}
+              className={cn(
+                "flex h-9 shrink-0 items-center rounded px-3 text-left text-sm font-medium transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                isActive
+                  ? "bg-card text-foreground"
+                  : "text-muted-foreground hover:bg-card hover:text-foreground",
+              )}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </nav>
 
-        {/*
-          Card pills rather than the bare text links these were: at text weight they read as
-          part of the description above and were routinely missed. They stay unfilled so they
-          still sit below the category nav in the hierarchy.
-        */}
-        <div className="flex flex-wrap items-center gap-2">
-          <ExternalLinkButton
-            icon={<StarIcon size={16} aria-hidden="true" />}
-            label="Star on GitHub"
-            url={GITHUB_REPOSITORY_URL}
-          />
-          <ExternalLinkButton
-            icon={<BugIcon size={16} aria-hidden="true" />}
-            label="Report an issue"
-            url={GITHUB_NEW_ISSUE_URL}
-          />
-        </div>
-      </header>
-
-      {/* Vertical nav rather than a pill row: it has room for a description per
-          category and scales as sections are added, the way desktop settings do.
-          The nav sticks so the categories stay reachable while a long panel scrolls. */}
-      <div className="flex min-h-0 flex-1 items-start gap-10">
-        <nav
-          className="sticky top-0 flex w-56 shrink-0 flex-col gap-0.5"
-          role="tablist"
-          aria-label="Settings categories"
-        >
-          {SETTINGS_TABS.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={isActive}
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  "group/tab relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                  isActive ? "text-foreground" : "text-muted-foreground hover:bg-card/60 hover:text-foreground",
-                )}
-              >
-                {isActive && (
-                  <motion.span
-                    layoutId="settings-tab-active"
-                    transition={{ type: "spring", stiffness: 520, damping: 42 }}
-                    className="absolute inset-0 -z-10 rounded-xl bg-card"
-                  />
-                )}
-                <span
-                  className={cn(
-                    "grid size-8 shrink-0 place-items-center rounded-lg transition-colors",
-                    isActive ? "bg-primary/15 text-primary" : "bg-card/70 text-muted-foreground",
-                  )}
-                >
-                  <Icon size={17} aria-hidden="true" />
-                </span>
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium">{tab.label}</span>
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {tab.description}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="flex min-h-0 w-full min-w-0 max-w-2xl flex-1 flex-col">
-
-      {activeTab === "about" && (
-        <div className="flex flex-col gap-5" role="tabpanel" aria-label="About settings">
-          <section className={SETTINGS_CARD} aria-labelledby="account-settings-title">
-            <SettingsCardHeader
-              title="Account"
-              titleId="account-settings-title"
-              icon={<UserIcon size={18} aria-hidden="true" />}
-              description={isSignedIn ? "Signed in to YouTube Music" : "No account connected"}
-              status={
-                <span className={isSignedIn ? "text-primary" : "text-muted-foreground"}>
-                  {isSignedIn ? "Connected" : "Signed out"}
-                </span>
-              }
-            />
-
-            {/* `justify-between` with a `min-w-0 flex-1` text column: without both, the name
-                and description push the sign-out button off the right edge on long channel
-                names instead of truncating. */}
-            <div className="flex items-center justify-between gap-3">
-              <AccountAvatar artworkUrl={account?.artworkUrl} className="size-11" iconSize={26} />
-
-              <div className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-base font-medium text-foreground">
+      <div
+        className="flex min-w-0 max-w-[860px] flex-1 flex-col gap-10 py-8 pl-6 pr-12"
+        role="tabpanel"
+        aria-label={`${activeTabLabel} settings`}
+      >
+      {activeTab === "account" && (
+        <SettingsSection id="account-settings-title" title="Account" first>
+          <div className={SETTINGS_ROW}>
+            {/* `min-w-0 flex-1` on the text column: without it a long channel name pushes the
+                button off the right edge instead of truncating. */}
+            <div className="flex items-center justify-between gap-4">
+              <AccountAvatar artworkUrl={account?.artworkUrl} className="size-10" iconSize={22} />
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className={cn(ROW_TITLE, "truncate")}>
                   {isSignedIn ? account?.name || "YouTube Music" : "Not signed in"}
                 </span>
-                <span className="truncate text-sm text-muted-foreground">
+                <span className={cn(ROW_DESCRIPTION, "truncate")}>
                   {isSignedIn
-                    ? `Session confirmed ${formatSessionAge(libraryState.sessionConfirmedAt)}.`
+                    ? `Signed in to YouTube Music. Session confirmed ${formatSessionAge(libraryState.sessionConfirmedAt)}.`
                     : "Sign in to load your library."}
                 </span>
               </div>
-
               {isSignedIn ? (
                 <button
-                  className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-card disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                  className={BUTTON_SECONDARY}
                   type="button"
                   onClick={() => void libraryController.signOut()}
                 >
@@ -1081,869 +1075,53 @@ export function SettingsPage({
                   Sign out
                 </button>
               ) : (
-                <GoogleSignInButton
-                  isBusy={authBusy}
-                  onClick={() => void onSignIn()}
-                />
+                <GoogleSignInButton isBusy={authBusy} onClick={() => void onSignIn()} />
               )}
             </div>
+            {libraryState.error && <p className={ROW_ERROR}>{libraryState.error}</p>}
+          </div>
 
-            {/* Separate Google logins, not channels — always shown once signed in, since this
-                is where a second account gets added, not just switched to. */}
-            {isSignedIn && (
-              <div className="flex flex-col gap-1.5 border-t border-border pt-4">
-                <GoogleAccountSwitcher
+          {/* Separate Google logins, not channels — always shown once signed in, since this
+              is where a second account gets added, not just switched to. */}
+          {isSignedIn && (
+            <SettingRow
+              title="Accounts"
+              below={
+                <div className="-mx-2 flex flex-col gap-0.5">
+                  <GoogleAccountSwitcher
+                    libraryController={libraryController}
+                    showSingle
+                    allowRemove
+                  />
+                  <AddGoogleAccountButton disabled={authBusy} onClick={() => void onSignIn()} />
+                </div>
+              }
+            />
+          )}
+
+          {isSignedIn && (
+            <SettingRow
+              title="Channel"
+              below={
+                <AccountSwitcher
                   libraryController={libraryController}
                   showSingle
-                  allowRemove
-                  label="Accounts"
+                  className="-mx-2"
                 />
-                <AddGoogleAccountButton disabled={authBusy} onClick={() => void onSignIn()} />
-              </div>
-            )}
-
-            {/* Renders nothing unless the account actually has more than one channel. */}
-            {isSignedIn && (
-              <div className="flex flex-col gap-1.5 border-t border-border pt-4">
-                <AccountSwitcher libraryController={libraryController} showSingle label="Channel" />
-              </div>
-            )}
-
-            {libraryState.error && <p className="text-sm text-destructive">{libraryState.error}</p>}
-          </section>
-
-          <section className={SETTINGS_CARD} aria-labelledby="lastfm-settings-title">
-            <SettingsCardHeader
-              title="Last.fm"
-              titleId="lastfm-settings-title"
-              icon={<LastFmIcon size={18} aria-hidden="true" />}
-              description={
-                lastFmSession
-                  ? `Connected as ${lastFmSession.username}`
-                  : "Connect Last.fm to scrobble your listening history."
-              }
-              status={
-                <span className={lastFmSession ? "text-primary" : "text-muted-foreground"}>
-                  {lastFmSession ? "Connected" : "Signed out"}
-                </span>
               }
             />
-
-            <div className="flex flex-col gap-5">
-              <SettingToggle
-                title="Scrobble plays"
-                description="Send now playing updates and scrobbles after a track reaches the Last.fm listening threshold."
-                checked={lastFmSession ? lastFmScrobblingEnabled : false}
-                disabled={!lastFmSession}
-                onCheckedChange={setLastFmScrobblingEnabled}
-              />
-
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <span className={cn(SETTING_LABEL, "min-w-0 flex-1")}>
-                  <strong>Account connection</strong>
-                  <span>
-                    {lastFmAuth
-                      ? "Approve the connection in your browser, then finish it here."
-                      : lastFmSession
-                        ? "Disconnecting stops future Last.fm updates from this app."
-                        : "A browser window will open so you can approve this app on Last.fm."}
-                  </span>
-                </span>
-                {lastFmSession ? (
-                  <button
-                    className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-card disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                    type="button"
-                    disabled={lastFmBusy}
-                    onClick={() => void handleDisconnectLastFm()}
-                  >
-                    <LastFmIcon size={18} />
-                    {lastFmBusy ? "Disconnecting..." : "Disconnect"}
-                  </button>
-                ) : lastFmAuth ? (
-                  <button
-                    className="flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                    type="button"
-                    disabled={lastFmBusy}
-                    onClick={() => void handleFinishLastFmAuth()}
-                  >
-                    <LastFmIcon size={18} />
-                    {lastFmBusy ? "Finishing..." : "Finish connection"}
-                  </button>
-                ) : (
-                  <button
-                    className="flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                    type="button"
-                    disabled={lastFmBusy}
-                    onClick={() => void handleStartLastFmAuth()}
-                  >
-                    <LastFmIcon size={18} />
-                    {lastFmBusy ? "Opening..." : "Connect Last.fm"}
-                  </button>
-                )}
-              </div>
-
-              {lastFmError && <p className="text-sm text-destructive">{lastFmError}</p>}
-            </div>
-          </section>
-
-          <section className={SETTINGS_CARD} aria-labelledby="discord-settings-title">
-            <h2 className="text-lg font-semibold text-foreground" id="discord-settings-title">
-              Discord
-            </h2>
-
-            <div className="flex flex-col gap-5">
-              <SettingToggle
-                title="Show what you're playing"
-                description="Publishes the current track, artist and artwork to your Discord profile. Turning this off clears whatever is showing there now."
-                checked={discordPresenceEnabled}
-                onCheckedChange={(enabled) => void DiscordRpcService.setEnabled(enabled)}
-              />
-            </div>
-          </section>
-
-          <section className={SETTINGS_CARD} aria-labelledby="about-settings-title">
-            <h2 className="text-lg font-semibold text-foreground" id="about-settings-title">
-              About
-            </h2>
-
-            <div className="flex flex-col gap-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <span className={cn(SETTING_LABEL, "min-w-0 flex-1")}>
-                  <strong>Updates</strong>
-                  <span>
-                    Installed version: {
-                      installedVersion
-                        ? installedVersion === "Unknown" ? installedVersion : `v${installedVersion}`
-                        : "Loading..."
-                    }
-                  </span>
-                </span>
-                <button
-                  className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-card disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                  type="button"
-                  disabled={updateStatus === "checking"}
-                  onClick={() => void handleCheckForUpdates()}
-                >
-                  <RefreshIcon size={18} />
-                  {updateStatus === "checking" ? "Checking..." : "Check for updates"}
-                </button>
-              </div>
-
-              {updateResult && (
-                <div className="flex flex-col gap-1">
-                  <span>{`Version ${updateResult.version} is available.`}</span>
-                  {/* The one link where a silent failure strands the user: if this cannot
-                      open, they have no other route to the download. */}
-                  <ExternalLinkButton
-                    label="Download"
-                    url={updateResult.releaseUrl}
-                    className="px-4 py-2"
-                  />
-                </div>
-              )}
-              {updateStatus === "current" && (
-                <p className="text-sm text-muted-foreground">You are up to date.</p>
-              )}
-              {updateStatus === "error" && (
-                <p className="text-sm text-destructive">{updateError}</p>
-              )}
-
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <span className={cn(SETTING_LABEL, "min-w-0 flex-1")}>
-                  <strong>Quick start</strong>
-                  <span>Replay the guided introduction.</span>
-                </span>
-                <button
-                  className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-card disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                  type="button"
-                  onClick={onRestartOnboarding}
-                >
-                  <RefreshIcon size={18} />
-                  Start onboarding
-                </button>
-              </div>
-            </div>
-          </section>
-        </div>
-      )}
-
-      {activeTab === "system" && (
-        <div className="flex flex-col gap-5" role="tabpanel" aria-label="Library settings">
-          <section className={SETTINGS_CARD} aria-labelledby="library-local-title">
-            <SettingsCardHeader
-              title="Local music"
-              titleId="library-local-title"
-              icon={<FolderIcon size={18} aria-hidden="true" />}
-              description="Folders on this computer, scanned into playlists."
-            />
-
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <span className={cn(SETTING_LABEL, "min-w-0 flex-1")}>
-                  <strong>Local playlists</strong>
-                  <span>Create playlists from folders on this computer.</span>
-                </span>
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    className={cn(SETTINGS_FIELD, "w-44")}
-                    type="text"
-                    value={localPlaylistName}
-                    placeholder="Playlist name"
-                    aria-label="Local playlist name"
-                    onChange={(event) => setLocalPlaylistName(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") handleCreateLocalPlaylist();
-                    }}
-                  />
-                  <button
-                    className="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-card disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                    type="button"
-                    onClick={handleCreateLocalPlaylist}
-                  >
-                    <FolderAddIcon size={18} />
-                    Create
-                  </button>
-                </div>
-              </div>
-
-              {localPlaylistError && <p className="text-sm text-destructive">{localPlaylistError}</p>}
-
-              {localPlaylists.length > 0 && (
-                <div className="flex flex-col gap-1.5">
-                  {localPlaylists.map((playlist) => (
-                    <div className="flex items-center justify-between gap-3 rounded-lg bg-background/40 px-3 py-2 text-sm" key={playlist.id}>
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="truncate text-foreground">
-                          <FolderIcon size={18} aria-hidden="true" />
-                          {playlist.name}
-                        </span>
-                        <button
-                          className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                          type="button"
-                          onClick={() => deleteLocalPlaylist(playlist.id)}
-                        >
-                          <TrashIcon size={18} />
-                          Delete
-                        </button>
-                      </div>
-
-                      <div className="flex flex-col gap-2">
-                        <span className="flex items-center gap-2">
-                          <input
-                            className={cn(SETTINGS_FIELD, "flex-1")}
-                            type="text"
-                            value={localPlaylistPathInputs[playlist.id] ?? ""}
-                            placeholder="/Users/name/Music"
-                            aria-label={`Folder path for ${playlist.name}`}
-                            onChange={(event) => setLocalPlaylistPathInputs((current) => ({
-                              ...current,
-                              [playlist.id]: event.target.value,
-                            }))}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") handleAddLocalPlaylistPath(playlist.id);
-                            }}
-                          />
-                          <button
-                            type="button"
-                            className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-card disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                            disabled={localPlaylistBrowsingId === playlist.id}
-                            title="Browse for folder"
-                            aria-label={`Browse for a folder for ${playlist.name}`}
-                            onClick={() => void handleBrowseLocalPlaylistPath(playlist.id)}
-                          >
-                            <FolderOpenIcon size={17} aria-hidden="true" />
-                          </button>
-                        </span>
-                        <button
-                          className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-card disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                          type="button"
-                          onClick={() => handleAddLocalPlaylistPath(playlist.id)}
-                        >
-                          Add
-                        </button>
-                      </div>
-
-                      {playlist.paths.length > 0 ? (
-                        <div className="flex flex-col gap-1.5">
-                          {playlist.paths.map((path) => (
-                            <div className="flex items-center justify-between gap-3 rounded-lg bg-background/40 px-3 py-2 text-sm" key={path}>
-                              <span>{path}</span>
-                              <button
-                                type="button"
-                                aria-label={`Remove ${path}`}
-                                onClick={() => removeLocalPlaylistPath(playlist.id, path)}
-                              >
-                                <TrashIcon size={16} aria-hidden="true" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="px-1 py-3 text-sm text-muted-foreground">No paths added yet.</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-          </section>
-
-          <section className={SETTINGS_CARD} aria-labelledby="library-storage-title">
-            <SettingsCardHeader
-              title="Storage"
-              titleId="library-storage-title"
-              icon={<DownloadIcon size={18} aria-hidden="true" />}
-              description="Manage temporary cache and app-managed offline files."
-            />
-
-            <div className="flex flex-wrap items-end justify-between gap-4 py-2">
-              <span className={cn(SETTING_LABEL, "min-w-0 flex-1")}>
-                <strong>Cache</strong>
-                <span className="tabular-nums">
-                  {cacheStats
-                    ? `${formatBytes(cacheStats.usedBytes)} of ${formatBytes(cacheStats.maxBytes)}`
-                    : "Loading…"}
-                  {cacheStats ? ` · ${cacheStats.entryCount} items` : ""}
-                </span>
-              </span>
-
-              <div className="flex flex-wrap items-center gap-2">
-                {/* The caption sits above the field rather than inside it: nested in a
-                    fixed-width pill it wrapped onto two lines and squeezed the number. */}
-                <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-                  Maximum size
-                  <span className="flex w-28 items-center gap-1.5 rounded-lg bg-background px-2.5 py-1.5 text-sm text-foreground focus-within:ring-2 focus-within:ring-inset focus-within:ring-ring/60">
-                    <input
-                      className="w-full min-w-0 bg-transparent tabular-nums outline-none"
-                      type="number"
-                      min="0.25"
-                      max="64"
-                      step="0.25"
-                      value={cacheSizeGb}
-                      disabled={cacheBusy}
-                      onChange={(event) => setCacheSizeGb(event.target.value)}
-                    />
-                    <span className="shrink-0 text-muted-foreground">GB</span>
-                  </span>
-                </label>
-                <button
-                  className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-card disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                  type="button"
-                  disabled={cacheBusy}
-                  onClick={() => void saveCacheSize()}
-                >
-                  Save
-                </button>
-                <button
-                  className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                  type="button"
-                  disabled={cacheBusy}
-                  onClick={() => void handleClearCache()}
-                >
-                  <TrashIcon size={18} />
-                  Clear cache
-                </button>
-              </div>
-            </div>
-
-            {cacheError && <p className="text-sm text-destructive">{cacheError}</p>}
-
-
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <span className={cn(SETTING_LABEL, "min-w-0 flex-1")}>
-                <strong>Downloads</strong>
-                <span>
-                  {offlineState.usedBytes > 0 || Object.keys(offlineState.entries).length > 0
-                    ? `${Object.keys(offlineState.entries).length} songs · ${formatBytes(offlineState.usedBytes)}`
-                    : "No songs downloaded yet."}
-                  {offlineState.downloadingId
-                    ? offlineState.progress !== null
-                      ? ` · downloading ${offlineState.progress}%`
-                      : " · downloading"
-                    : ""}
-                  {offlineState.queued.length > 0
-                    ? ` · ${offlineState.queued.length} queued`
-                    : ""}
-                </span>
-              </span>
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-                  Maximum size (0 = unlimited)
-                  <span className="flex w-28 items-center gap-1.5 rounded-lg bg-background px-2.5 py-1.5 text-sm text-foreground focus-within:ring-2 focus-within:ring-inset focus-within:ring-ring/60">
-                    <input
-                      className="w-full min-w-0 bg-transparent outline-none"
-                      type="number"
-                      min={0}
-                      value={Math.round(offlineMaxGb)}
-                      onChange={(event) => {
-                        const next = Number(event.target.value);
-                        if (!Number.isFinite(next)) return;
-                        setOfflineMaxGb(next);
-                        setOfflineMaxBytes(Math.max(0, next) * 1024 ** 3);
-                      }}
-                      aria-label="Maximum download size in gigabytes, zero for unlimited"
-                    />
-                    <span className="shrink-0 text-xs text-muted-foreground">GB</span>
-                  </span>
-                </label>
-                <button
-                  className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                  type="button"
-                  disabled={clearingDownloads || Object.keys(offlineState.entries).length === 0}
-                  onClick={() => {
-                    setClearingDownloads(true);
-                    void removeAllDownloads().finally(() => setClearingDownloads(false));
-                  }}
-                >
-                  <TrashIcon size={18} />
-                  {clearingDownloads ? "Removing..." : "Remove all"}
-                </button>
-              </div>
-            </div>
-
-            <DownloadLocationSetting hasDownloads={Object.keys(offlineState.entries).length > 0} />
-
-          </section>
-
-          <section className={SETTINGS_CARD} aria-labelledby="library-quality-title">
-            <SettingsCardHeader
-              title="Quality"
-              titleId="library-quality-title"
-              icon={<PlayIcon size={18} aria-hidden="true" />}
-              description="Bitrate picked when a track is streamed or saved."
-            />
-
-            <SettingRow
-              title="Streaming quality"
-              description="Applies to songs played over the network. Lower uses less data."
-            >
-              {(labelId) => (
-                <Select
-                  className="w-52"
-                  value={streamingQuality}
-                  onValueChange={(value) => setStreamingQuality(value as AudioQuality)}
-                >
-                  <SelectTrigger aria-labelledby={labelId}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(Object.keys(AUDIO_QUALITY_LABELS) as AudioQuality[]).map((quality) => (
-                      <SelectItem key={quality} value={quality}>
-                        {AUDIO_QUALITY_LABELS[quality]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </SettingRow>
-
-
-            <SettingRow
-              title="Download quality"
-              description="Applies to songs saved for offline. Higher sounds better and uses more disk."
-            >
-              {(labelId) => (
-                <Select
-                  className="w-52"
-                  value={downloadQuality}
-                  onValueChange={(value) => setDownloadQuality(value as AudioQuality)}
-                >
-                  <SelectTrigger aria-labelledby={labelId}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(Object.keys(AUDIO_QUALITY_LABELS) as AudioQuality[]).map((quality) => (
-                      <SelectItem key={quality} value={quality}>
-                        {AUDIO_QUALITY_LABELS[quality]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </SettingRow>
-
-          </section>
-
-          <section className={SETTINGS_CARD} aria-labelledby="library-lyrics-title">
-            <SettingsCardHeader
-              title="Lyrics"
-              titleId="library-lyrics-title"
-              icon={<LyricsIcon size={18} aria-hidden="true" />}
-              description="Where lyrics come from and how they read."
-            />
-
-            <SettingRow
-              title="Translate lyrics"
-              description="Shows a translation under each line. Sends the lyrics to Google Translate."
-            >
-              {(labelId) => (
-                <Select
-                  className="w-52"
-                  value={lyricsTranslationLang}
-                  onValueChange={setLyricsTranslationLang}
-                >
-                  <SelectTrigger aria-labelledby={labelId}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={TRANSLATION_OFF}>Off</SelectItem>
-                    {TRANSLATION_LANGUAGES.map((code) => (
-                      <SelectItem key={code} value={code}>
-                        {getLanguageLabel(code)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </SettingRow>
-
-
-            <SettingRow
-              title="Lyrics text size"
-              description="Scales the lyrics screen. The size still adapts to the window on top of this."
-            >
-              {(labelId) => (
-                <Select
-                  className="w-52"
-                  value={String(lyricsFontScale)}
-                  onValueChange={(value) => setLyricsFontScale(Number(value))}
-                >
-                  <SelectTrigger aria-labelledby={labelId}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {LYRICS_FONT_SCALES.map((option) => (
-                      <SelectItem key={option.value} value={String(option.value)}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </SettingRow>
-
-
-            <SettingRow
-              title="Preferred lyrics source"
-              description="Tried first when a song opens. If it has nothing for that song, the others still run."
-            >
-              {(labelId) => (
-                <Select
-                  className="w-52"
-                  value={preferredLyricsSource}
-                  onValueChange={setPreferredLyricsSourceId}
-                >
-                  <SelectTrigger aria-labelledby={labelId}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={AUTO_LYRICS_SOURCE}>Automatic</SelectItem>
-                    {LYRICS_SOURCES.map((source) => (
-                      <SelectItem key={source.id} value={source.id}>
-                        {source.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </SettingRow>
-
-          </section>
-
-          <section className={SETTINGS_CARD} aria-labelledby="library-system-title">
-            <SettingsCardHeader
-              title="System"
-              titleId="library-system-title"
-              icon={<SettingsIcon size={18} aria-hidden="true" />}
-              description="How YTM Offline behaves outside the window."
-            />
-
-            <SettingToggle
-              title="Launch at startup"
-              description="Start YTM Offline when your computer starts."
-              checked={autostartEnabled}
-              disabled={autostartLoading}
-              onCheckedChange={(checked) => void handleAutostartChange(checked)}
-            />
-
-            {autostartError && <p className="text-sm text-destructive">{autostartError}</p>}
-
-
-            <SettingToggle
-              title="Minimize to tray"
-              description="Closing the window hides YTM Offline to the system tray and keeps playing. Quit from the tray icon."
-              checked={minimizeToTray}
-              onCheckedChange={setMinimizeToTray}
-            />
-
-
-            <SettingToggle
-              title="Remember window size and location"
-              description="Reopen the main window with its last size and screen position."
-              checked={mainWindowGeometryPersistenceEnabled}
-              onCheckedChange={setMainWindowGeometryPersistenceEnabled}
-            />
-
-
-          </section>
-
-          <section className={SETTINGS_CARD} aria-labelledby="library-trouble-title">
-            <SettingsCardHeader
-              title="Troubleshooting"
-              titleId="library-trouble-title"
-              icon={<BugIcon size={18} aria-hidden="true" />}
-              description="Diagnostics, and the irreversible reset."
-            />
-
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <span className={cn(SETTING_LABEL, "min-w-0 flex-1")}>
-                <strong>Application log</strong>
-                <span>Open the current log file for sharing or troubleshooting.</span>
-              </span>
-              <button
-                className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-card disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                type="button"
-                disabled={logOpening}
-                onClick={() => void handleOpenLog()}
-              >
-                <LogFileIcon size={18} />
-                {logOpening ? "Opening..." : "Open log"}
-              </button>
-            </div>
-
-            {logError && <p className="text-sm text-destructive">{logError}</p>}
-
-
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <span className={cn(SETTING_LABEL, "min-w-0 flex-1")}>
-                <strong>Delete all app data</strong>
-                <span>Reset settings, cache, account, queue, tabs, onboarding, and local data.</span>
-              </span>
-              <button
-                className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                type="button"
-                disabled={resetSettingsBusy}
-                onClick={() => void handleClearAllSettings()}
-              >
-                <TrashIcon size={18} />
-                {resetSettingsBusy
-                  ? "Deleting..."
-                  : resetSettingsConfirming
-                    ? "Press again to confirm"
-                    : "Delete everything"}
-              </button>
-            </div>
-
-            {resetSettingsError && <p className="text-sm text-destructive">{resetSettingsError}</p>}
-          </section>
-        </div>
-      )}
-
-      {activeTab === "shortcuts" && (
-        <div className="flex flex-col gap-5" role="tabpanel" aria-label="Keyboard shortcut settings">
-          <section className={SETTINGS_CARD} aria-labelledby="keyboard-shortcuts-settings-title">
-            <h2
-              className="text-lg font-semibold text-foreground"
-              id="keyboard-shortcuts-settings-title"
-            >
-              Keyboard shortcuts
-            </h2>
-
-            <div className="flex flex-col gap-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <span className={cn(SETTING_LABEL, "min-w-0 flex-1")}>
-                  <strong>Reset shortcuts</strong>
-                  <span>Restore every keyboard shortcut to its default.</span>
-                </span>
-                <button
-                  className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-card disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                  type="button"
-                  onClick={resetKeyboardShortcuts}
-                >
-                  <RefreshIcon size={18} />
-                  Reset all
-                </button>
-              </div>
-
-              {KEYBOARD_SHORTCUT_ACTIONS.map((shortcutAction) => {
-                const shortcut = keyboardShortcuts[shortcutAction.id];
-                const isListening = listeningShortcut === shortcutAction.id;
-
-                return (
-                  <div className="flex items-center justify-between gap-4 py-2" key={shortcutAction.id}>
-                    <span className={SETTING_LABEL}>
-                      <strong>{shortcutAction.label}</strong>
-                      <span>{shortcutAction.description}</span>
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        className={cn("min-w-32 rounded-lg bg-background px-2.5 py-1.5 text-center text-sm text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring", isListening && "text-primary")}
-                        type="button"
-                        aria-pressed={isListening}
-                        onClick={() => setListeningShortcut(shortcutAction.id)}
-                        onKeyDown={(event) => handleShortcutCapture(event, shortcutAction.id)}
-                        onBlur={() => {
-                          if (isListening) setListeningShortcut(null);
-                        }}
-                      >
-                        {isListening ? "Press shortcut..." : formatKeyboardShortcut(shortcut)}
-                      </button>
-                      <button
-                        className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-card disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                        type="button"
-                        onClick={() => resetKeyboardShortcut(shortcutAction.id)}
-                      >
-                        Reset
-                      </button>
-                      <button
-                        className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-card disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                        type="button"
-                        disabled={!shortcut}
-                        onClick={() => setKeyboardShortcut(shortcutAction.id, null)}
-                      >
-                        Clear
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        </div>
-      )}
-
-      {activeTab === "window" && (
-        <div className="flex flex-col gap-5" role="tabpanel" aria-label="Style settings">
-          <section className={SETTINGS_CARD} aria-labelledby="window-settings-title">
-            <SettingsCardHeader
-              title="Window controls"
-              titleId="window-settings-title"
-              icon={<QueuePanelIcon size={18} aria-hidden="true" />}
-              description="Choose the title bar buttons and compact player behavior."
-            />
-
-            <SettingToggle
-              title="Mini player"
-              description="Show compact playback controls when you switch away from the app while a song is loaded. Turning this off closes its window and frees its memory."
-              checked={miniPlayerEnabled}
-              onCheckedChange={setMiniPlayerEnabled}
-            />
-
-            <SettingRow
-              title="Mini player hover bar"
-              description="Choose what the expanded hover slider controls."
-            >
-              {() => (
-                <Select
-                  className="w-44"
-                  value={miniPlayerHoverAction}
-                  onValueChange={(value) =>
-                    setMiniPlayerHoverAction(value as MiniPlayerHoverAction)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="seek">Song position</SelectItem>
-                    <SelectItem value="volume">Volume</SelectItem>
-                  </SelectContent>
-                </Select>
-              )}
-            </SettingRow>
-
-            <div className="flex items-center justify-between gap-4 py-2">
-              <span className={SETTING_LABEL}>
-                <strong>Mini player position</strong>
-                <span>Move the mini player back to the bottom center of this screen.</span>
-              </span>
-              <button
-                className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-card disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                type="button"
-                disabled={miniPlayerResetting}
-                onClick={() => void handleResetMiniPlayerPosition()}
-              >
-                {miniPlayerResetting ? "Resetting..." : "Reset position"}
-              </button>
-            </div>
-
-            <SettingRow
-              title="Window controls"
-              description={isLinux
-                ? "How minimize, maximize and close are drawn. Switching OS native restarts the app."
-                : "How minimize, maximize and close are drawn."}
-            >
-              {(labelId) => (
-                <div role="group" aria-labelledby={labelId}>
-                  <Tabs
-                    value={windowControlStyle}
-                    onValueChange={(value) =>
-                      handleWindowControlStyleChange(value as WindowControlStyle)}
-                    variant="segment"
-                  >
-                    <TabsList>
-                      <TabsTrigger value="macos">macOS</TabsTrigger>
-                      <TabsTrigger value="windows">Windows</TabsTrigger>
-                      <TabsTrigger value="native">OS native</TabsTrigger>
-                    </TabsList>
-                  </Tabs>
-                </div>
-              )}
-            </SettingRow>
-
-            {/* Only reachable when it does something: hidden once native chrome takes over,
-                and off tiling compositors the buttons already show without this. */}
-            {isLinux && tilingWindowManager && windowControlStyle !== "native" && (
-              <SettingToggle
-                title="Show on this compositor"
-                description="Tiling compositors don't draw window buttons for apps, so they're hidden by default. Turn this on to show them anyway."
-                checked={forceWindowControls}
-                onCheckedChange={setForceWindowControls}
-              />
-            )}
-
-            {isLinux && (
-              <SettingToggle
-                title="Show in system media controls"
-                description="Expose playback to the desktop's media widget and media keys (MPRIS). Turning this off stops the now-playing notifications some desktops show."
-                checked={linuxMediaSession}
-                onCheckedChange={setLinuxMediaSession}
-              />
-            )}
-          </section>
-
-          <section className={SETTINGS_CARD} aria-labelledby="behavior-settings-title">
-            <div className="flex items-center gap-2">
-              <h2 className="text-lg" id="behavior-settings-title">Behavior</h2>
-            </div>
-
-            <SettingToggle
-              title="Compact player bar"
-              description="Tuck the seek bar under the transport controls instead of spanning the full width."
-              checked={compactPlayerBar}
-              onCheckedChange={setCompactPlayerBar}
-            />
-
-            <SettingToggle
-              title="Always show extra controls"
-              description="Keep lyrics and queue visible instead of showing them only on hover."
-              checked={extraPlayerControlsAlwaysVisible}
-              onCheckedChange={setExtraPlayerControlsAlwaysVisible}
-            />
-          </section>
-        </div>
+          )}
+        </SettingsSection>
       )}
 
       {activeTab === "playback" && (
-        <div className="flex flex-col gap-5" role="tabpanel" aria-label="Playback settings">
-          <section className={SETTINGS_CARD} aria-labelledby="playback-engine-title">
-            <SettingsCardHeader
-              title="Audio engine"
-              titleId="playback-engine-title"
-              icon={<PlayIcon size={18} aria-hidden="true" />}
-              description="What actually plays the sound."
-            />
-
+        <>
+          <SettingsSection
+            id="playback-engine-title"
+            title="Playback"
+            first
+            note="The playback method applies from the next track."
+          >
             <SettingRow
               title="Playback method"
               description={
@@ -1972,11 +1150,31 @@ export function SettingsPage({
               )}
             </SettingRow>
 
-            <p className="px-1 text-xs text-muted-foreground">
-              Applies from the next track.
-            </p>
-
             <OutputDeviceSetting engineMode={audioEngineMode} />
+
+            <SettingRow
+              title="Streaming quality"
+              description="Applies to songs played over the network. Lower uses less data."
+            >
+              {(labelId) => (
+                <Select
+                  className="w-52"
+                  value={streamingQuality}
+                  onValueChange={(value) => setStreamingQuality(value as AudioQuality)}
+                >
+                  <SelectTrigger aria-labelledby={labelId}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(AUDIO_QUALITY_LABELS) as AudioQuality[]).map((quality) => (
+                      <SelectItem key={quality} value={quality}>
+                        {AUDIO_QUALITY_LABELS[quality]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </SettingRow>
 
             <SettingToggle
               title="Resolve streams as your account"
@@ -1996,18 +1194,22 @@ export function SettingsPage({
                 setAuthenticatedStreaming(enabled);
               }}
             />
-          </section>
+          </SettingsSection>
 
-          <EqualizerSettings engineMode={audioEngineMode} />
+          <SettingsSection id="equalizer-settings-title" title="Equaliser">
+            <EqualizerSettings engineMode={audioEngineMode} />
+          </SettingsSection>
 
-          <section className={SETTINGS_CARD} aria-labelledby="playback-settings-title">
-            <SettingsCardHeader
-              title="Transitions"
-              titleId="playback-settings-title"
-              icon={<PlayIcon size={18} aria-hidden="true" />}
-              description="How one track becomes the next."
-            />
-
+          {/*
+            Crossfading a downloaded track is not possible: offline files play through an
+            audio element rather than the deck pair the overlap needs. Saying so beats
+            leaving people to wonder why it only sometimes works.
+          */}
+          <SettingsSection
+            id="playback-settings-title"
+            title="Transitions"
+            note="Both apply to streamed tracks. Downloaded and local files always play back to back."
+          >
             <SettingToggle
               title="Gapless playback"
               description="Load the next track while the current one is still playing, so albums and live sets run without a pause between songs."
@@ -2045,88 +1247,759 @@ export function SettingsPage({
                 </span>
               )}
             </SettingRow>
+          </SettingsSection>
 
-            {/*
-              Crossfading a downloaded track is not possible: offline files play through an
-              audio element rather than the deck pair the overlap needs. Saying so beats
-              leaving people to wonder why it only sometimes works.
-            */}
-            <p className="text-sm text-muted-foreground">
-              Both apply to streamed tracks. Downloaded and local files always play back to back.
-            </p>
-          </section>
-
-          <section className={SETTINGS_CARD} aria-labelledby="session-settings-title">
-            <SettingsCardHeader
-              title="Session"
-              titleId="session-settings-title"
-              icon={<QueuePanelIcon size={18} aria-hidden="true" />}
-              description="What comes back when you reopen YTM Offline."
-            />
-
+          <SettingsSection id="session-settings-title" title="Session">
             <SettingToggle
               title="Restore tabs and queues"
               description="Reopen your tabs, queues and playback position on launch. Playback always starts paused."
               checked={sessionRestoreEnabled}
               onCheckedChange={setSessionRestoreEnabled}
             />
-          </section>
-        </div>
+          </SettingsSection>
+        </>
+      )}
+
+      {activeTab === "downloads" && (
+        <>
+          <SettingsSection id="library-storage-title" title="Downloads" first>
+            <DownloadLocationSetting hasDownloads={downloadedCount > 0} />
+
+            <SettingRow
+              title="Download quality"
+              description="Applies to songs saved for offline. Higher sounds better and uses more disk."
+            >
+              {(labelId) => (
+                <Select
+                  className="w-52"
+                  value={downloadQuality}
+                  onValueChange={(value) => setDownloadQuality(value as AudioQuality)}
+                >
+                  <SelectTrigger aria-labelledby={labelId}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(AUDIO_QUALITY_LABELS) as AudioQuality[]).map((quality) => (
+                      <SelectItem key={quality} value={quality}>
+                        {AUDIO_QUALITY_LABELS[quality]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </SettingRow>
+
+            <SettingRow title="Storage limit" description="0 means no limit.">
+              {() => (
+                <label className={UNIT_FIELD}>
+                  <input
+                    className="w-full min-w-0 bg-transparent tabular-nums outline-none"
+                    type="number"
+                    min={0}
+                    value={Math.round(offlineMaxGb)}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      if (!Number.isFinite(next)) return;
+                      setOfflineMaxGb(next);
+                      setOfflineMaxBytes(Math.max(0, next) * 1024 ** 3);
+                    }}
+                    aria-label="Maximum download size in gigabytes, zero for unlimited"
+                  />
+                  <span className="shrink-0 text-[13px] text-muted-foreground">GB</span>
+                </label>
+              )}
+            </SettingRow>
+
+            <SettingRow
+              title="Remove all downloads"
+              description={
+                <span className="tabular-nums">
+                  {offlineState.usedBytes > 0 || downloadedCount > 0
+                    ? `${downloadedCount} songs · ${formatBytes(offlineState.usedBytes)}`
+                    : "No songs downloaded yet."}
+                  {offlineState.downloadingId
+                    ? offlineState.progress !== null
+                      ? ` · downloading ${offlineState.progress}%`
+                      : " · downloading"
+                    : ""}
+                  {offlineState.queued.length > 0
+                    ? ` · ${offlineState.queued.length} queued`
+                    : ""}
+                </span>
+              }
+            >
+              {() => (
+                <button
+                  className={BUTTON_DESTRUCTIVE}
+                  type="button"
+                  disabled={clearingDownloads || downloadedCount === 0}
+                  onClick={() => {
+                    setClearingDownloads(true);
+                    void removeAllDownloads().finally(() => setClearingDownloads(false));
+                  }}
+                >
+                  {clearingDownloads ? "Removing..." : "Remove all"}
+                </button>
+              )}
+            </SettingRow>
+          </SettingsSection>
+
+          <SettingsSection id="library-cache-title" title="Cache">
+            <SettingRow
+              title="Cache"
+              description={
+                <span className="tabular-nums">
+                  {cacheStats
+                    ? `${formatBytes(cacheStats.usedBytes)} of ${formatBytes(cacheStats.maxBytes)}`
+                    : "Loading…"}
+                  {cacheStats ? ` · ${cacheStats.entryCount} items` : ""}
+                </span>
+              }
+              below={cacheError && <p className={ROW_ERROR}>{cacheError}</p>}
+            >
+              {() => (
+                <>
+                  <label className={UNIT_FIELD}>
+                    <input
+                      className="w-full min-w-0 bg-transparent tabular-nums outline-none"
+                      type="number"
+                      min="0.25"
+                      max="64"
+                      step="0.25"
+                      value={cacheSizeGb}
+                      disabled={cacheBusy}
+                      onChange={(event) => setCacheSizeGb(event.target.value)}
+                      aria-label="Maximum cache size in gigabytes"
+                    />
+                    <span className="shrink-0 text-[13px] text-muted-foreground">GB</span>
+                  </label>
+                  <button
+                    className={BUTTON_SECONDARY}
+                    type="button"
+                    disabled={cacheBusy}
+                    onClick={() => void saveCacheSize()}
+                  >
+                    Save
+                  </button>
+                  <button
+                    className={BUTTON_DESTRUCTIVE}
+                    type="button"
+                    disabled={cacheBusy}
+                    onClick={() => void handleClearCache()}
+                  >
+                    Clear cache
+                  </button>
+                </>
+              )}
+            </SettingRow>
+          </SettingsSection>
+        </>
+      )}
+
+      {activeTab === "lyrics" && (
+        <SettingsSection id="library-lyrics-title" title="Lyrics" first>
+          <SettingRow
+            title="Translate lyrics"
+            description="Shows a translation under each line. Sends the lyrics to Google Translate."
+          >
+            {(labelId) => (
+              <Select
+                className="w-52"
+                value={lyricsTranslationLang}
+                onValueChange={setLyricsTranslationLang}
+              >
+                <SelectTrigger aria-labelledby={labelId}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={TRANSLATION_OFF}>Off</SelectItem>
+                  {TRANSLATION_LANGUAGES.map((code) => (
+                    <SelectItem key={code} value={code}>
+                      {getLanguageLabel(code)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </SettingRow>
+
+          <SettingRow
+            title="Lyrics text size"
+            description="Scales the lyrics screen. The size still adapts to the window on top of this."
+          >
+            {(labelId) => (
+              <Select
+                className="w-52"
+                value={String(lyricsFontScale)}
+                onValueChange={(value) => setLyricsFontScale(Number(value))}
+              >
+                <SelectTrigger aria-labelledby={labelId}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LYRICS_FONT_SCALES.map((option) => (
+                    <SelectItem key={option.value} value={String(option.value)}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </SettingRow>
+
+          <SettingRow
+            title="Preferred lyrics source"
+            description="Tried first when a song opens. If it has nothing for that song, the others still run."
+          >
+            {(labelId) => (
+              <Select
+                className="w-52"
+                value={preferredLyricsSource}
+                onValueChange={setPreferredLyricsSourceId}
+              >
+                <SelectTrigger aria-labelledby={labelId}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={AUTO_LYRICS_SOURCE}>Automatic</SelectItem>
+                  {LYRICS_SOURCES.map((source) => (
+                    <SelectItem key={source.id} value={source.id}>
+                      {source.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </SettingRow>
+        </SettingsSection>
+      )}
+
+      {activeTab === "library" && (
+        <SettingsSection id="library-local-title" title="Local files" first>
+          <SettingRow
+            title="Local playlists"
+            description="Create playlists from folders on this computer."
+            below={localPlaylistError && <p className={ROW_ERROR}>{localPlaylistError}</p>}
+          >
+            {() => (
+              <>
+                <input
+                  className={cn(SETTINGS_FIELD, "w-44")}
+                  type="text"
+                  value={localPlaylistName}
+                  placeholder="Playlist name"
+                  aria-label="Local playlist name"
+                  onChange={(event) => setLocalPlaylistName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") handleCreateLocalPlaylist();
+                  }}
+                />
+                <button
+                  className={BUTTON_SECONDARY}
+                  type="button"
+                  onClick={handleCreateLocalPlaylist}
+                >
+                  <FolderAddIcon size={18} />
+                  Create
+                </button>
+              </>
+            )}
+          </SettingRow>
+
+          {localPlaylists.map((playlist) => (
+            <SettingRow
+              key={playlist.id}
+              title={
+                <span className="flex min-w-0 items-center gap-2">
+                  <FolderIcon size={18} aria-hidden="true" className="shrink-0" />
+                  <span className="truncate">{playlist.name}</span>
+                </span>
+              }
+              below={
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      className={cn(SETTINGS_FIELD, "flex-1 font-mono text-[13px]")}
+                      type="text"
+                      value={localPlaylistPathInputs[playlist.id] ?? ""}
+                      placeholder="/Users/name/Music"
+                      aria-label={`Folder path for ${playlist.name}`}
+                      onChange={(event) => setLocalPlaylistPathInputs((current) => ({
+                        ...current,
+                        [playlist.id]: event.target.value,
+                      }))}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") handleAddLocalPlaylistPath(playlist.id);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className={BUTTON_SECONDARY}
+                      disabled={localPlaylistBrowsingId === playlist.id}
+                      title="Browse for folder"
+                      aria-label={`Browse for a folder for ${playlist.name}`}
+                      onClick={() => void handleBrowseLocalPlaylistPath(playlist.id)}
+                    >
+                      <FolderOpenIcon size={18} aria-hidden="true" />
+                      Browse…
+                    </button>
+                    <button
+                      className={BUTTON_SECONDARY}
+                      type="button"
+                      onClick={() => handleAddLocalPlaylistPath(playlist.id)}
+                    >
+                      Add
+                    </button>
+                  </div>
+
+                  {playlist.paths.length > 0 ? (
+                    <div className="flex flex-col gap-0.5">
+                      {playlist.paths.map((path) => (
+                        <div
+                          className="flex h-9 items-center justify-between gap-3 rounded bg-background pl-3"
+                          key={path}
+                        >
+                          <span className="truncate font-mono text-[13px] text-foreground">{path}</span>
+                          <button
+                            type="button"
+                            className={ICON_BUTTON}
+                            aria-label={`Remove ${path}`}
+                            onClick={() => removeLocalPlaylistPath(playlist.id, path)}
+                          >
+                            <TrashIcon size={16} aria-hidden="true" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className={ROW_DESCRIPTION}>No paths added yet.</p>
+                  )}
+                </div>
+              }
+            >
+              {() => (
+                <button
+                  className={BUTTON_DESTRUCTIVE}
+                  type="button"
+                  onClick={() => deleteLocalPlaylist(playlist.id)}
+                >
+                  Delete
+                </button>
+              )}
+            </SettingRow>
+          ))}
+        </SettingsSection>
       )}
 
       {activeTab === "appearance" && (
-        <div className="flex flex-col gap-5" role="tabpanel" aria-label="Appearance settings">
-          <section className={SETTINGS_CARD} aria-labelledby="accent-settings-title">
-            <SettingsCardHeader title="Accent colour" titleId="accent-settings-title" icon={<PaletteIcon size={18} aria-hidden="true" />} description="Choose the colour for active controls and highlights." />
-            <label className="flex items-center gap-3 text-sm text-foreground">
-              <input type="color" value={accentColor} onChange={(event) => setAccentColor(event.target.value)} aria-label="Accent colour" className="size-10 cursor-pointer rounded-lg bg-transparent" />
-              <span>{accentColor.toUpperCase()}</span>
-            </label>
-          </section>
+        <>
+          <SettingsSection id="accent-settings-title" title="Appearance" first>
+            <AccentColorSetting />
+            <SettingToggle
+              title="Mini-player"
+              description="Show small controls when you switch away from the app while a song is loaded. Turning this off closes its window and frees its memory."
+              checked={miniPlayerEnabled}
+              onCheckedChange={setMiniPlayerEnabled}
+            />
+            <SettingRow
+              title="Mini-player hover bar"
+              description="Choose what the expanded hover slider controls."
+            >
+              {() => (
+                <Select
+                  className="w-44"
+                  value={miniPlayerHoverAction}
+                  onValueChange={(value) =>
+                    setMiniPlayerHoverAction(value as MiniPlayerHoverAction)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="seek">Song position</SelectItem>
+                    <SelectItem value="volume">Volume</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            </SettingRow>
+            <SettingRow
+              title="Mini-player position"
+              description="Move the mini-player back to the bottom center of this screen."
+            >
+              {() => (
+                <button
+                  className={BUTTON_SECONDARY}
+                  type="button"
+                  disabled={miniPlayerResetting}
+                  onClick={() => void handleResetMiniPlayerPosition()}
+                >
+                  {miniPlayerResetting ? "Resetting..." : "Reset position"}
+                </button>
+              )}
+            </SettingRow>
+          </SettingsSection>
 
-          <section className={SETTINGS_CARD} aria-labelledby="toolbar-settings-title">
-            <div className="min-w-0">
-              <h2 className="text-lg" id="toolbar-settings-title">Title bar</h2>
-              <p className="text-sm text-muted-foreground">
-                Which optional buttons sit next to the window controls.
-              </p>
-            </div>
+          <SettingsSection id="behavior-settings-title" title="Player bar">
+            <SettingToggle
+              title="Compact player bar"
+              description="Tuck the seek bar under the transport controls instead of spanning the full width."
+              checked={compactPlayerBar}
+              onCheckedChange={setCompactPlayerBar}
+            />
 
+            <SettingToggle
+              title="Always show extra controls"
+              description="Keep lyrics and queue visible instead of showing them only on hover."
+              checked={extraPlayerControlsAlwaysVisible}
+              onCheckedChange={setExtraPlayerControlsAlwaysVisible}
+            />
+          </SettingsSection>
+
+          <SettingsSection
+            id="toolbar-settings-title"
+            title="Title bar"
+            note="Which optional buttons sit next to the window controls."
+          >
             {TOOLBAR_ITEMS.map((item) => (
               <ToolbarItemToggle key={item.id} item={item} />
             ))}
-          </section>
+          </SettingsSection>
 
-          <section className={SETTINGS_CARD} aria-labelledby="home-settings-title">
-            <div className="min-w-0">
-              <h2 className="text-lg" id="home-settings-title">Home</h2>
-              <p className="text-sm text-muted-foreground">
-                Which sections the home page shows.
-              </p>
-            </div>
-
+          <SettingsSection id="home-settings-title" title="Home">
             <SettingToggle
               title="Made for you"
               description="The recommendation carousel at the top. Hiding it leaves the surprise button and More recommendations working."
               checked={madeForYouVisible}
               onCheckedChange={setMadeForYouVisible}
             />
-          </section>
+          </SettingsSection>
 
-          <section className={SETTINGS_CARD} aria-labelledby="motion-settings-title">
-            <div className="min-w-0">
-              <h2 className="text-lg" id="motion-settings-title">Motion &amp; performance</h2>
-              <p className="text-sm text-muted-foreground">
-                Turn these off on low-powered machines.
-              </p>
-            </div>
-
+          <SettingsSection
+            id="motion-settings-title"
+            title="Motion and performance"
+            note="Turn these off on low-powered machines."
+          >
             <PotatoPcSettings />
-          </section>
-        </div>
+          </SettingsSection>
+        </>
       )}
 
-        </div>
+      {activeTab === "window" && (
+        <>
+          <SettingsSection id="window-settings-title" title="Window" first>
+            <SettingRow
+              title="Window controls"
+              description={isLinux
+                ? "How minimize, maximize and close are drawn. Switching OS native restarts the app."
+                : "How minimize, maximize and close are drawn."}
+            >
+              {(labelId) => (
+                <div role="group" aria-labelledby={labelId}>
+                  <Tabs
+                    value={windowControlStyle}
+                    onValueChange={(value) =>
+                      handleWindowControlStyleChange(value as WindowControlStyle)}
+                    variant="segment"
+                  >
+                    <TabsList>
+                      <TabsTrigger value="app">App</TabsTrigger>
+                      <TabsTrigger value="native">OS native</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                </div>
+              )}
+            </SettingRow>
+
+            {/* Only reachable when it does something: hidden once native chrome takes over,
+                and off tiling compositors the buttons already show without this. */}
+            {isLinux && tilingWindowManager && windowControlStyle !== "native" && (
+              <SettingToggle
+                title="Show on this compositor"
+                description="Tiling compositors don't draw window buttons for apps, so they're hidden by default. Turn this on to show them anyway."
+                checked={forceWindowControls}
+                onCheckedChange={setForceWindowControls}
+              />
+            )}
+
+            {isLinux && (
+              <SettingToggle
+                title="Show in system media controls"
+                description="Expose playback to the desktop's media widget and media keys (MPRIS). Turning this off stops the now-playing notifications some desktops show."
+                checked={linuxMediaSession}
+                onCheckedChange={setLinuxMediaSession}
+              />
+            )}
+
+            <SettingToggle
+              title="Remember window size and location"
+              description="Reopen the main window with its last size and screen position."
+              checked={mainWindowGeometryPersistenceEnabled}
+              onCheckedChange={setMainWindowGeometryPersistenceEnabled}
+            />
+          </SettingsSection>
+
+          <SettingsSection id="library-system-title" title="System">
+            <SettingToggle
+              title="Launch at startup"
+              description="Start YTM Offline when your computer starts."
+              checked={autostartEnabled}
+              disabled={autostartLoading}
+              onCheckedChange={(checked) => void handleAutostartChange(checked)}
+              below={autostartError && <p className={ROW_ERROR}>{autostartError}</p>}
+            />
+
+            <SettingToggle
+              title="Minimize to tray"
+              description="Closing the window hides YTM Offline to the system tray and keeps playing. Quit from the tray icon."
+              checked={minimizeToTray}
+              onCheckedChange={setMinimizeToTray}
+            />
+          </SettingsSection>
+        </>
+      )}
+
+      {activeTab === "shortcuts" && (
+        <SettingsSection id="keyboard-shortcuts-settings-title" title="Shortcuts" first>
+          <SettingRow
+            title="Reset shortcuts"
+            description="Restore every keyboard shortcut to its default."
+          >
+            {() => (
+              <button className={BUTTON_SECONDARY} type="button" onClick={resetKeyboardShortcuts}>
+                <RefreshIcon size={18} />
+                Reset all
+              </button>
+            )}
+          </SettingRow>
+
+          {KEYBOARD_SHORTCUT_ACTIONS.map((shortcutAction) => {
+            const shortcut = keyboardShortcuts[shortcutAction.id];
+            const isListening = listeningShortcut === shortcutAction.id;
+
+            return (
+              <SettingRow
+                key={shortcutAction.id}
+                title={shortcutAction.label}
+                description={shortcutAction.description}
+              >
+                {() => (
+                  <>
+                    <button
+                      className={cn(
+                        "h-9 min-w-32 rounded px-3 text-center text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                        isListening ? "bg-foreground text-background" : "bg-background text-foreground",
+                      )}
+                      type="button"
+                      aria-pressed={isListening}
+                      onClick={() => setListeningShortcut(shortcutAction.id)}
+                      onKeyDown={(event) => handleShortcutCapture(event, shortcutAction.id)}
+                      onBlur={() => {
+                        if (isListening) setListeningShortcut(null);
+                      }}
+                    >
+                      {isListening ? "Press shortcut..." : formatKeyboardShortcut(shortcut)}
+                    </button>
+                    <button
+                      className={BUTTON_PLAIN}
+                      type="button"
+                      onClick={() => resetKeyboardShortcut(shortcutAction.id)}
+                    >
+                      Reset
+                    </button>
+                    <button
+                      className={BUTTON_PLAIN}
+                      type="button"
+                      disabled={!shortcut}
+                      onClick={() => setKeyboardShortcut(shortcutAction.id, null)}
+                    >
+                      Clear
+                    </button>
+                  </>
+                )}
+              </SettingRow>
+            );
+          })}
+        </SettingsSection>
+      )}
+
+      {activeTab === "integrations" && (
+        <>
+          <SettingsSection id="lastfm-settings-title" title="Last.fm" first>
+            <SettingRow
+              title={lastFmSession ? `Connected as ${lastFmSession.username}` : "Account connection"}
+              description={
+                lastFmAuth
+                  ? "Approve the connection in your browser, then finish it here."
+                  : lastFmSession
+                    ? "Disconnecting stops future Last.fm updates from this app."
+                    : "Connect Last.fm to scrobble your listening history. A browser window will open so you can approve this app."
+              }
+              below={lastFmError && <p className={ROW_ERROR}>{lastFmError}</p>}
+            >
+              {() => lastFmSession ? (
+                <button
+                  className={BUTTON_SECONDARY}
+                  type="button"
+                  disabled={lastFmBusy}
+                  onClick={() => void handleDisconnectLastFm()}
+                >
+                  <LastFmIcon size={18} />
+                  {lastFmBusy ? "Disconnecting..." : "Disconnect"}
+                </button>
+              ) : lastFmAuth ? (
+                <button
+                  className={BUTTON_PRIMARY}
+                  type="button"
+                  disabled={lastFmBusy}
+                  onClick={() => void handleFinishLastFmAuth()}
+                >
+                  <LastFmIcon size={18} />
+                  {lastFmBusy ? "Finishing..." : "Finish connection"}
+                </button>
+              ) : (
+                <button
+                  className={BUTTON_PRIMARY}
+                  type="button"
+                  disabled={lastFmBusy}
+                  onClick={() => void handleStartLastFmAuth()}
+                >
+                  <LastFmIcon size={18} />
+                  {lastFmBusy ? "Opening..." : "Connect Last.fm"}
+                </button>
+              )}
+            </SettingRow>
+
+            <SettingToggle
+              title="Scrobble plays"
+              description="Send now playing updates and scrobbles after a track reaches the Last.fm listening threshold."
+              checked={lastFmSession ? lastFmScrobblingEnabled : false}
+              disabled={!lastFmSession}
+              onCheckedChange={setLastFmScrobblingEnabled}
+            />
+          </SettingsSection>
+
+          <SettingsSection id="discord-settings-title" title="Discord">
+            <SettingToggle
+              title="Show what you're playing"
+              description="Publishes the current track, artist and artwork to your Discord profile. Turning this off clears whatever is showing there now."
+              checked={discordPresenceEnabled}
+              onCheckedChange={(enabled) => void DiscordRpcService.setEnabled(enabled)}
+            />
+          </SettingsSection>
+        </>
+      )}
+
+      {activeTab === "about" && (
+        <>
+          <SettingsSection id="about-settings-title" title="About" first>
+            <SettingRow
+              title="Updates"
+              description={`Installed version: ${
+                installedVersion
+                  ? installedVersion === "Unknown" ? installedVersion : `v${installedVersion}`
+                  : "Loading..."
+              }`}
+              below={
+                <>
+                  {updateResult && (
+                    <div className="flex items-center justify-between gap-4 rounded bg-card py-2 pl-4 pr-2">
+                      <span className="text-sm text-foreground">
+                        {`Version ${updateResult.version} is available.`}
+                      </span>
+                      {/* The one link where a silent failure strands the user: if this cannot
+                          open, they have no other route to the download. */}
+                      <ExternalLinkButton label="Download" url={updateResult.releaseUrl} />
+                    </div>
+                  )}
+                  {updateStatus === "current" && (
+                    <p className={ROW_DESCRIPTION}>You are up to date.</p>
+                  )}
+                  {updateStatus === "error" && <p className={ROW_ERROR}>{updateError}</p>}
+                </>
+              }
+            >
+              {() => (
+                <button
+                  className={BUTTON_SECONDARY}
+                  type="button"
+                  disabled={updateStatus === "checking"}
+                  onClick={() => void handleCheckForUpdates()}
+                >
+                  <RefreshIcon size={18} />
+                  {updateStatus === "checking" ? "Checking..." : "Check for updates"}
+                </button>
+              )}
+            </SettingRow>
+
+            <SettingRow title="Quick start" description="Replay the guided introduction.">
+              {() => (
+                <button className={BUTTON_SECONDARY} type="button" onClick={onRestartOnboarding}>
+                  <RefreshIcon size={18} />
+                  Start onboarding
+                </button>
+              )}
+            </SettingRow>
+
+            <SettingRow title="Project" description="Source code and issue tracker on GitHub.">
+              {() => (
+                <>
+                  <ExternalLinkButton
+                    icon={<StarIcon size={18} aria-hidden="true" />}
+                    label="Star on GitHub"
+                    url={GITHUB_REPOSITORY_URL}
+                  />
+                  <ExternalLinkButton
+                    icon={<BugIcon size={18} aria-hidden="true" />}
+                    label="Report an issue"
+                    url={GITHUB_NEW_ISSUE_URL}
+                  />
+                </>
+              )}
+            </SettingRow>
+          </SettingsSection>
+
+          <SettingsSection id="library-trouble-title" title="Troubleshooting">
+            <SettingRow
+              title="Application log"
+              description="Open the current log file for sharing or troubleshooting."
+              below={logError && <p className={ROW_ERROR}>{logError}</p>}
+            >
+              {() => (
+                <button
+                  className={BUTTON_SECONDARY}
+                  type="button"
+                  disabled={logOpening}
+                  onClick={() => void handleOpenLog()}
+                >
+                  <LogFileIcon size={18} />
+                  {logOpening ? "Opening..." : "Open log"}
+                </button>
+              )}
+            </SettingRow>
+
+            <SettingRow
+              title="Delete all app data"
+              description="Reset settings, cache, account, queue, tabs, onboarding, and local data."
+              below={resetSettingsError && <p className={ROW_ERROR}>{resetSettingsError}</p>}
+            >
+              {() => (
+                <button
+                  className={BUTTON_DESTRUCTIVE}
+                  type="button"
+                  disabled={resetSettingsBusy}
+                  onClick={() => void handleClearAllSettings()}
+                >
+                  {resetSettingsBusy
+                    ? "Deleting..."
+                    : resetSettingsConfirming
+                      ? "Press again to confirm"
+                      : "Delete everything"}
+                </button>
+              )}
+            </SettingRow>
+          </SettingsSection>
+        </>
+      )}
       </div>
     </main>
   );

@@ -22,6 +22,8 @@ const HOVER_ACTION_STORAGE_KEY = "mini-player-hover-action";
 const CHANGE_EVENT = "mini-player-enabled-change";
 const HOVER_ACTION_CHANGE_EVENT = "mini-player-hover-action-change";
 const MINI_PLAYER_BOTTOM_MARGIN = 24;
+const MINI_PLAYER_WIDTH = 360;
+const MINI_PLAYER_HEIGHT = 100;
 const POSITION_SAVE_DELAY_MS = 350;
 let positionSaveTimer: number | null = null;
 
@@ -196,8 +198,8 @@ async function createMiniPlayerWindow(): Promise<WebviewWindow | null> {
   return new Promise<WebviewWindow | null>((resolve) => {
     const miniWin = new WebviewWindow(MINI_PLAYER_LABEL, {
       url: "/mini.html",
-      width: 146,
-      height: 116,
+      width: MINI_PLAYER_WIDTH,
+      height: MINI_PLAYER_HEIGHT,
       resizable: false,
       decorations: false,
       alwaysOnTop: true,

@@ -188,28 +188,14 @@ export function FloatingPanel({
               ref={panelRef}
               role="dialog"
               aria-modal="false"
-              initial={
-                side === "top"
-                  ? { opacity: 0, scale: 0.94, y: 6 }
-                  : side === "bottom"
-                    ? { opacity: 0, scale: 0.94, y: -6 }
-                    : { opacity: 0, scale: 0.94, x: -6 }
-              }
-              animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
-              exit={
-                side === "top"
-                  ? { opacity: 0, scale: 0.96, y: 4, transition: { duration: 0.12 } }
-                  : side === "bottom"
-                    ? { opacity: 0, scale: 0.96, y: -4, transition: { duration: 0.12 } }
-                    : { opacity: 0, scale: 0.96, x: -4, transition: { duration: 0.12 } }
-              }
-              transition={{ type: "spring", stiffness: 460, damping: 34, mass: 0.6 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, transition: { duration: 0.1 } }}
+              transition={{ duration: 0.12, ease: "easeOut" }}
               {...hoverProps}
               style={{ position: "fixed", left: position.left, top: position.top }}
               className={cn(
-                side === "top" ? "origin-bottom" : side === "bottom" ? "origin-top" : "origin-left",
-                "z-[100] rounded-lg  bg-popover p-2 text-popover-foreground",
-                "shadow-2xl ring-1 ring-border",
+                "z-[100] rounded-lg border border-border bg-card p-2 text-card-foreground",
                 className,
               )}
             >

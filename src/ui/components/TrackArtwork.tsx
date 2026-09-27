@@ -239,14 +239,15 @@ export function TrackArtwork({
   return (
     <span
       className={cn(
-        "relative flex shrink-0 items-center justify-center overflow-hidden text-muted-foreground",
+        // A solid placeholder behind the fallback glyph until the image lands.
+        "relative flex shrink-0 items-center justify-center overflow-hidden bg-card text-muted-foreground",
         className,
       )}
     >
       <FallbackIcon
         className={cn(
           "transition-opacity duration-200",
-          isArtworkLoaded ? "opacity-0" : "opacity-65",
+          isArtworkLoaded ? "opacity-0" : "opacity-100",
         )}
         size={iconSize}
         aria-hidden="true"

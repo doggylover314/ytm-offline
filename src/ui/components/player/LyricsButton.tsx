@@ -1,7 +1,7 @@
-import { cn } from "@/lib/utils";
 import { LyricsActiveIcon, LyricsIcon } from "@/ui/icons";
 import { usePlayerSelector } from "../../../player/playerStore";
 import { usePlayerUIState } from "../../stores/playerUIStore";
+import { PLAYER_ICON_BUTTON } from "./playerButton";
 
 interface LyricsButtonProps {
   onToggle: () => void;
@@ -17,19 +17,13 @@ export function LyricsButton({ onToggle }: LyricsButtonProps) {
   return (
     <button
       type="button"
-      className={cn(
-        "flex size-8 items-center justify-center rounded-full transition-colors",
-        "disabled:pointer-events-none disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        uiState.isLyricsOpen
-          ? "bg-card text-primary"
-          : "text-muted-foreground hover:text-foreground",
-      )}
+      className={PLAYER_ICON_BUTTON}
       onClick={onToggle}
       disabled={!hasTrack}
       aria-label={uiState.isLyricsOpen ? "Close lyrics" : "Open lyrics"}
       aria-pressed={uiState.isLyricsOpen}
     >
-      <Glyph size={19} />
+      <Glyph size={20} />
     </button>
   );
 }

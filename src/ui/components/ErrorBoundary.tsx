@@ -78,7 +78,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
         {/* The message, not the stack: a stack in the UI is noise to the person reading it
             and is already in the log for the person debugging it. */}
-        <p className="max-w-md break-words rounded-lg bg-card/60 px-3 py-2 text-xs text-muted-foreground">
+        <p className="max-w-md break-words rounded bg-card px-3 py-2 font-mono text-xs text-muted-foreground">
           {error.message || "No error message was provided."}
         </p>
 
@@ -86,18 +86,18 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
           <button
             type="button"
             className={cn(
-              "flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground",
-              "transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "flex h-9 items-center gap-1.5 rounded bg-foreground pl-3 pr-4 text-sm font-medium text-background",
+              "transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             )}
             onClick={this.retry}
           >
-            <RefreshIcon size={15} aria-hidden="true" />
+            <RefreshIcon size={18} aria-hidden="true" />
             Try again
           </button>
           {onDismiss && (
             <button
               type="button"
-              className="rounded-full bg-card px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-9 rounded bg-muted px-4 text-sm font-medium text-foreground transition-colors hover:bg-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onClick={this.dismiss}
             >
               {dismissLabel}

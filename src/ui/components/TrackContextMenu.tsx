@@ -8,7 +8,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { AlbumIcon, CheckIcon, CloseIcon, CompassIcon, DownloadIcon, HeartActiveIcon, HeartIcon, LinkIcon, ListIcon, PencilIcon, PlaylistAddIcon, PlaylistIcon, RadioIcon, SearchIcon, SkipNextIcon, TrashIcon } from "@/ui/icons";
+import { AlbumIcon, CheckActiveIcon, CheckIcon, CloseIcon, CompassIcon, DownloadActiveIcon, DownloadIcon, HeartActiveIcon, HeartIcon, LinkIcon, ListIcon, PencilIcon, PlaylistAddIcon, PlaylistIcon, RadioIcon, SearchIcon, SkipNextIcon, TrashIcon } from "@/ui/icons";
 import type { Playlist, Track, TrackRating } from "../../datasource/types";
 import {
   TrackContextMenuContext,
@@ -45,7 +45,15 @@ function barePlaylistId(playlistId: string): string {
 }
 
 const PICKER_ROW =
-  "flex w-full items-center gap-2.5 rounded-lg p-1.5 transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+  "flex w-full items-center gap-3 rounded p-1.5 transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+/** Menu panel and row, per the approved design: solid card, 1px edge, 36px rows. */
+const MENU_PANEL =
+  "fixed z-50 flex min-w-56 flex-col rounded-lg bg-card p-1.5 border border-border";
+const MENU_ITEM =
+  "flex h-9 w-full shrink-0 items-center gap-2.5 rounded px-2.5 text-left text-sm text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+/** Solid notice, bottom centre. */
+const NOTICE =
+  "fixed bottom-28 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-3 rounded-lg bg-foreground px-4 py-3 text-sm text-background";
 import {
   getLocalPlaylistItems,
   isLocalPlaylist,
@@ -556,35 +564,35 @@ export function TrackContextMenuProvider({
       {menuPosition && track && (
         <div
           ref={menuRef}
-          className="fixed z-50 flex min-w-56 flex-col gap-0.5 rounded-xl bg-popover/95 p-1.5 shadow-2xl backdrop-blur"
+          className={MENU_PANEL}
           style={{ left: menuPosition.x, top: menuPosition.y }}
           role="menu"
           onMouseDown={(event) => event.stopPropagation()}
         >
-          <button type="button" role="menuitem" className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" onClick={playNext}>
+          <button type="button" role="menuitem" className={MENU_ITEM} onClick={playNext}>
             <SkipNextIcon size={18} aria-hidden="true" />
             <span className="flex-1">Play next</span>
           </button>
-          <button type="button" role="menuitem" className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" onClick={addToQueue}>
+          <button type="button" role="menuitem" className={MENU_ITEM} onClick={addToQueue}>
             <ListIcon size={18} aria-hidden="true" />
             <span className="flex-1">Add to queue</span>
           </button>
           {/* Needs a YouTube video id to seed the mix — a local file has nothing to seed from. */}
           {track.source !== "local" && (
-            <button type="button" role="menuitem" className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" onClick={startRadio}>
+            <button type="button" role="menuitem" className={MENU_ITEM} onClick={startRadio}>
               <RadioIcon size={18} aria-hidden="true" />
               <span className="flex-1">Start radio</span>
             </button>
           )}
-          <button type="button" role="menuitem" className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" onClick={openPicker}>
+          <button type="button" role="menuitem" className={MENU_ITEM} onClick={openPicker}>
             <PlaylistAddIcon size={18} aria-hidden="true" />
             <span className="flex-1">Add to playlist</span>
-            <kbd>Ctrl S</kbd>
+            <kbd className="font-sans text-xs text-muted-foreground">Ctrl S</kbd>
           </button>
           {canLikeSelectedTrack && (
             <button
               type="button"
-              role="menuitem" className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              role="menuitem" className={MENU_ITEM}
               onClick={() => {
                 if (!track) return;
                 setMenuPosition(null);
@@ -610,7 +618,7 @@ export function TrackContextMenuProvider({
             <button
               type="button"
               role="menuitem"
-              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className={MENU_ITEM}
               onClick={() => {
                 const selected = track;
                 const status = getOfflineStatus(selected.id);
@@ -621,7 +629,7 @@ export function TrackContextMenuProvider({
               }}
             >
               {selectedTrackOfflineStatus === "ready" ? (
-                <CheckIcon size={18} aria-hidden="true" className="text-primary" />
+                <DownloadActiveIcon size={18} aria-hidden="true" />
               ) : (
                 <DownloadIcon size={18} aria-hidden="true" />
               )}
@@ -642,7 +650,7 @@ export function TrackContextMenuProvider({
             <button
               type="button"
               role="menuitem"
-              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className={MENU_ITEM}
               onClick={() => {
                 const selected = track;
                 setMenuPosition(null);
@@ -658,7 +666,7 @@ export function TrackContextMenuProvider({
             <button
               type="button"
               role="menuitem"
-              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className={MENU_ITEM}
               onClick={() => {
                 const selected = track;
                 setMenuPosition(null);
@@ -673,7 +681,7 @@ export function TrackContextMenuProvider({
             <button
               type="button"
               role="menuitem"
-              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className={MENU_ITEM}
               onClick={() => {
                 const selected = track;
                 setMenuPosition(null);
@@ -685,7 +693,7 @@ export function TrackContextMenuProvider({
             </button>
           )}
           {canCopySelectedTrackLink && (
-            <button type="button" role="menuitem" className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" onClick={() => void copyLink()}>
+            <button type="button" role="menuitem" className={MENU_ITEM} onClick={() => void copyLink()}>
               <LinkIcon size={18} aria-hidden="true" />
               <span className="flex-1">Copy link</span>
             </button>
@@ -693,7 +701,8 @@ export function TrackContextMenuProvider({
           {canRemoveSelectedTrackFromPlaylist && (
             <button
               type="button"
-              role="menuitem" className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-card disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              role="menuitem"
+              className={cn(MENU_ITEM, "text-destructive")}
               onClick={() => void removeFromPlaylist()}
               disabled={Boolean(addingPlaylistId || isRemovingTrack)}
             >
@@ -706,13 +715,13 @@ export function TrackContextMenuProvider({
 
       {isPickerOpen && track && (
         <div
-          className="fixed inset-0 z-50 grid place-items-center bg-background/70 backdrop-blur-sm"
+          className="fixed inset-0 z-50 grid place-items-center"
           onMouseDown={() => {
             if (!addingPlaylistId) setIsPickerOpen(false);
           }}
         >
           <section
-            className="flex max-h-[70vh] w-[min(28rem,90vw)] flex-col gap-3 rounded-2xl bg-popover p-4 shadow-2xl"
+            className="flex max-h-[70vh] w-[min(28rem,90vw)] flex-col gap-3 rounded-lg bg-card p-6 border border-border"
             role="dialog"
             aria-modal="true"
             aria-label={`Add ${track.title} to playlist`}
@@ -720,13 +729,13 @@ export function TrackContextMenuProvider({
           >
             <header className="flex items-center gap-3">
               <TrackArtwork
-                className="size-11 shrink-0 rounded-lg object-cover"
+                className="size-11 shrink-0 rounded object-cover"
                 size={44}
                 artworkUrl={track.artworkUrl}
                 iconSize={24}
                 loading="eager"
               />
-              <div className="flex min-w-0 flex-1 flex-col text-sm [&_small]:truncate [&_small]:text-xs [&_small]:text-muted-foreground [&_strong]:truncate [&_strong]:font-medium">
+              <div className="flex min-w-0 flex-1 flex-col text-sm [&_small]:truncate [&_small]:text-xs [&_small]:text-muted-foreground [&_strong]:truncate [&_strong]:text-lg [&_strong]:font-semibold">
                 <strong>{track.title}</strong>
                 <small>
                   <ArtistLinks artists={track.artists} fallback={track.artist} />
@@ -734,7 +743,7 @@ export function TrackContextMenuProvider({
               </div>
               <button
                 type="button"
-                className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                className="flex size-8 shrink-0 items-center justify-center rounded text-foreground transition-colors hover:bg-muted disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 disabled={Boolean(addingPlaylistId)}
                 onClick={() => setIsPickerOpen(false)}
                 aria-label="Close playlist picker"
@@ -743,7 +752,7 @@ export function TrackContextMenuProvider({
               </button>
             </header>
 
-            <label className="flex items-center gap-2 rounded-lg bg-card px-2.5 py-2 text-muted-foreground [&_input]:min-w-0 [&_input]:flex-1 [&_input]:bg-transparent [&_input]:text-sm [&_input]:text-foreground [&_input]:outline-none">
+            <label className="flex h-10 items-center gap-2.5 rounded bg-background px-3 text-muted-foreground [&_input]:min-w-0 [&_input]:flex-1 [&_input]:bg-transparent [&_input]:text-sm [&_input]:text-foreground [&_input]:outline-none">
               <SearchIcon size={18} aria-hidden="true" />
               <input
                 ref={searchRef}
@@ -777,12 +786,12 @@ export function TrackContextMenuProvider({
                       playlistRefs.current[index] = element;
                     }}
                     type="button"
-                    className={cn(PICKER_ROW, selectedPlaylistIndex === index && "bg-primary/15 text-foreground")}
+                    className={cn(PICKER_ROW, selectedPlaylistIndex === index && "bg-muted text-foreground")}
                     disabled={Boolean(addingPlaylistId)}
                     onMouseMove={() => setSelectedPlaylistIndex(null)}
                     onClick={() => void addToPlaylist(playlist)}
                   >
-                    <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-md bg-card text-muted-foreground [&_img]:size-full [&_img]:object-cover">
+                    <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded bg-muted text-foreground [&_img]:size-full [&_img]:object-cover">
                       {playlist.artworkUrl ? (
                         <img src={playlist.artworkUrl} alt="" />
                       ) : (
@@ -799,10 +808,10 @@ export function TrackContextMenuProvider({
                       /* Still clickable: this only means we *know* it is in there. Adding again
                          is harmless and answers "Already in playlist". */
                       <span
-                        className="grid size-5 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"
+                        className="grid size-5 shrink-0 place-items-center text-foreground"
                         title="Already in this playlist"
                       >
-                        <CheckIcon size={13} aria-hidden="true" />
+                        <CheckActiveIcon size={18} aria-hidden="true" />
                         <span className="sr-only">Already in this playlist</span>
                       </span>
                     ) : null}
@@ -823,7 +832,7 @@ export function TrackContextMenuProvider({
       )}
 
       {toast && (
-        <div className="fixed bottom-28 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-2 rounded-full bg-popover/95 px-4 py-2 text-sm text-foreground shadow-2xl backdrop-blur" role="status">
+        <div className={NOTICE} role="status">
           {addingPlaylistId || isRemovingTrack || isLikeMutationPending ? (
             <Loader variant="spinner" size={18} />
           ) : toast === "Already in playlist" ? (

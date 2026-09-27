@@ -1,19 +1,19 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { cn } from "@/lib/utils";
+import { cn, formatMinutesSeconds } from "@/lib/utils";
 import { Tooltip } from "@/components/motion/tooltip";
 import {
   BackIcon,
   CheckIcon,
-  ClockIcon,
+  CloseIcon,
   DiceIcon,
   ForwardIcon,
   PauseIcon,
   PlaylistAddIcon,
-  ShuffleActiveIcon,
+  ListIcon,
   ShuffleIcon,
   TrashIcon,
 } from "@/ui/icons";
-import { Loader, MusicVisualizer } from "@/components/motion/loader";
+import { Loader } from "@/components/motion/loader";
 import { libraryController } from "../../../player/playerStore";
 import { logInternalError } from "../../../internal/logging";
 import type { Track } from "../../../datasource/types";
@@ -40,8 +40,12 @@ const DRAG_SLOP_PX = 6;
 /** Auto-generated tail rows rendered before "Show more" is needed. */
 const AUTOMATIC_PAGE_SIZE = 30;
 
+/** Buttons on the panel itself. */
 const ICON_BUTTON =
-  "flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "flex size-8 shrink-0 items-center justify-center rounded text-foreground transition-colors hover:bg-card disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+/** Buttons inside a row, which is already `bg-card` while hovered. */
+const ROW_BUTTON =
+  "flex size-7 shrink-0 items-center justify-center rounded text-foreground transition-colors hover:bg-muted disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 type QueueSection = "manual" | "automatic";
 
@@ -128,29 +132,29 @@ const QueueRow = memo(function QueueRow({
         "group/queue-item relative flex items-center rounded transition-colors hover:bg-card",
         // The pointer handler writes --drag-translation; this is what renders the lift.
         "[transform:translateY(var(--drag-translation,0px))]",
-        collapsed ? "justify-center" : "gap-1",
+        collapsed && "justify-center",
         isDragged && "opacity-40",
         // The stop marker has to read without hovering, so it draws a rule under the row —
         // the queue visibly ends here.
-        isStopAfter && "after:absolute after:inset-x-2 after:-bottom-px after:h-px after:bg-primary/70",
+        isStopAfter && "after:absolute after:inset-x-2 after:-bottom-px after:h-px after:bg-muted-foreground",
         dropEdge === "before" &&
-          "before:absolute before:inset-x-2 before:-top-px before:h-0.5 before:rounded-full before:bg-primary",
+          "before:absolute before:inset-x-2 before:-top-px before:h-0.5 before:bg-foreground",
         dropEdge === "after" &&
-          "after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:rounded-full after:bg-primary",
+          "after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:bg-foreground",
       )}
     >
       <button
         type="button"
         className={cn(
           "flex min-w-0 items-center rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          collapsed ? "p-1.5" : "flex-1 gap-2.5 p-1.5",
+          collapsed ? "p-1.5" : "flex-1 gap-3 px-2 py-1.5",
         )}
         onPointerDown={(event) => onPointerDown(event, absoluteIndex, section)}
         onClick={() => onPlay(absoluteIndex)}
         aria-label={collapsed ? `Play ${track.title}` : undefined}
       >
-        {/* The cover carries the position and the play affordance so the row needs no
-            separate number column — that is what buys back the width when collapsed. */}
+        {/* The cover carries the position on hover so the row needs no separate number
+            column — that is what buys back the width when collapsed. */}
         <span className="relative shrink-0">
           <TrackArtwork
             className={cn("rounded", collapsed ? "size-11" : "size-10")}
@@ -159,16 +163,7 @@ const QueueRow = memo(function QueueRow({
             iconSize={collapsed ? 20 : 18}
           />
           <span
-            className={cn(
-              "absolute inset-0 grid place-items-center rounded-lg bg-background/70 text-[11px] font-semibold tabular-nums text-foreground",
-              /*
-               * The blur is applied on hover, not hidden by the opacity. `backdrop-filter` is
-               * what forces an element onto its own compositor layer, and this badge is
-               * mounted on every row in the queue — at `opacity-0` it showed nothing while
-               * still asking for a layer per row.
-               */
-              "opacity-0 transition-opacity group-hover/queue-item:opacity-100 group-hover/queue-item:backdrop-blur-[2px]",
-            )}
+            className="absolute inset-0 grid place-items-center rounded bg-background text-xs font-semibold tabular-nums text-foreground opacity-0 transition-opacity group-hover/queue-item:opacity-100"
             aria-hidden="true"
           >
             {position}
@@ -177,9 +172,9 @@ const QueueRow = memo(function QueueRow({
 
         {!collapsed && (
           <span className="flex min-w-0 flex-col">
-            <span className="truncate text-sm text-foreground">{track.title}</span>
+            <span className="truncate text-sm font-semibold text-foreground">{track.title}</span>
             <ArtistLinks
-              className="truncate text-xs text-muted-foreground"
+              className="truncate text-[13px] text-muted-foreground"
               artists={track.artists}
               fallback={track.artist}
             />
@@ -188,53 +183,66 @@ const QueueRow = memo(function QueueRow({
       </button>
 
       {!collapsed && (
-        <span
-          className={cn(
-            "mr-1 flex shrink-0 items-center transition-opacity",
-            // The stop marker stays visible unhovered — it is state, not an affordance.
-            isStopAfter
-              ? "opacity-100"
-              : "opacity-0 focus-within:opacity-100 group-hover/queue-item:opacity-100",
-          )}
-        >
-          <Tooltip content={isStopAfter ? "Don't end queue here" : "End queue after this"}>
-            <button
-              type="button"
-              className={cn(ICON_BUTTON, isStopAfter && "text-primary")}
-              onClick={() => onStopAfter(absoluteIndex)}
-              aria-pressed={isStopAfter}
+        <span className="relative mr-2 flex shrink-0 items-center justify-end">
+          {/* Over the duration rather than beside it, so the title keeps the row's width until
+              the pointer is on it. The stop marker stays visible unhovered — it is state. */}
+          <span
+            className={cn(
+              "peer absolute right-0 flex items-center gap-0.5 rounded bg-chrome transition-opacity group-hover/queue-item:bg-card",
+              isStopAfter
+                ? "opacity-100"
+                : "opacity-0 focus-within:opacity-100 group-hover/queue-item:opacity-100",
+            )}
+          >
+            <Tooltip content={isStopAfter ? "Don't end queue here" : "End queue after this"}>
+              <button
+                type="button"
+                className={cn(ROW_BUTTON, isStopAfter && "bg-muted hover:bg-border")}
+                onClick={() => onStopAfter(absoluteIndex)}
+                aria-pressed={isStopAfter}
+              >
+                <PauseIcon size={15} aria-hidden="true" />
+                <span className="sr-only">
+                  {isStopAfter ? "Don't end queue here" : "End queue after this"}
+                </span>
+              </button>
+            </Tooltip>
+            <Tooltip content="Generate a new queue from here">
+              <button
+                type="button"
+                className={ROW_BUTTON}
+                disabled={isGenerating}
+                onClick={() => onGenerateAfter(absoluteIndex)}
+              >
+                <DiceIcon
+                  size={15}
+                  aria-hidden="true"
+                  className={isGenerating ? "motion-safe:animate-spin" : undefined}
+                />
+                <span className="sr-only">Generate a new queue from here</span>
+              </button>
+            </Tooltip>
+            <Tooltip content="Remove from queue">
+              <button
+                type="button"
+                className={ROW_BUTTON}
+                onClick={() => onRemove(absoluteIndex)}
+              >
+                <TrashIcon size={15} aria-hidden="true" />
+                <span className="sr-only">{`Remove ${track.title} from queue`}</span>
+              </button>
+            </Tooltip>
+          </span>
+          {track.durationSec ? (
+            <time
+              className={cn(
+                "text-[13px] tabular-nums text-muted-foreground transition-opacity group-hover/queue-item:opacity-0 peer-focus-within:opacity-0",
+                isStopAfter && "opacity-0",
+              )}
             >
-              <PauseIcon size={15} aria-hidden="true" />
-              <span className="sr-only">
-                {isStopAfter ? "Don't end queue here" : "End queue after this"}
-              </span>
-            </button>
-          </Tooltip>
-          <Tooltip content="Generate a new queue from here">
-            <button
-              type="button"
-              className={cn(ICON_BUTTON, isGenerating && "text-primary")}
-              disabled={isGenerating}
-              onClick={() => onGenerateAfter(absoluteIndex)}
-            >
-              <DiceIcon
-                size={15}
-                aria-hidden="true"
-                className={isGenerating ? "motion-safe:animate-spin" : undefined}
-              />
-              <span className="sr-only">Generate a new queue from here</span>
-            </button>
-          </Tooltip>
-          <Tooltip content="Remove from queue">
-            <button
-              type="button"
-              className={cn(ICON_BUTTON, "hover:text-primary")}
-              onClick={() => onRemove(absoluteIndex)}
-            >
-              <TrashIcon size={15} aria-hidden="true" />
-              <span className="sr-only">{`Remove ${track.title} from queue`}</span>
-            </button>
-          </Tooltip>
+              {formatMinutesSeconds(track.durationSec)}
+            </time>
+          ) : null}
         </span>
       )}
     </div>
@@ -249,7 +257,7 @@ const QueueRow = memo(function QueueRow({
       content={
         <span className="flex flex-col">
           <span className="font-medium">{track.title}</span>
-          <span className="text-muted-foreground">{track.artist}</span>
+          <span className="text-[#525252]">{track.artist}</span>
         </span>
       }
     >
@@ -311,10 +319,10 @@ function ShowMoreQueueButton({
       onClick={onClick}
       aria-label={collapsed ? label : undefined}
       className={cn(
-        "shrink-0 rounded-full text-muted-foreground transition-colors hover:bg-card hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "shrink-0 rounded text-muted-foreground transition-colors hover:bg-card hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         collapsed
           ? "mx-auto flex size-7 items-center justify-center text-sm"
-          : "mt-0.5 px-3 py-1.5 text-left text-xs font-medium",
+          : "mt-1 h-8 px-2 text-left text-[13px] font-medium",
       )}
     >
       {collapsed ? "+" : label}
@@ -640,18 +648,16 @@ export function QueuePanel({ onClose }: QueuePanelProps) {
 
   const sectionLabel = (label: string, count: number) =>
     collapsed ? (
-      // A hairline instead of a heading: at 76px a word would either truncate or wrap.
+      // A hairline instead of a heading: at this width a word would either truncate or wrap.
       <span
-        className="mx-auto my-1.5 h-px w-6 rounded-full bg-border"
+        className="mx-auto my-1.5 h-px w-6 bg-border"
         role="separator"
         aria-label={label}
       />
     ) : (
-      <div className="flex items-baseline justify-between gap-2 px-2 pb-1.5 pt-1">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-          {label}
-        </span>
-        <span className="text-[11px] tabular-nums text-muted-foreground">{count}</span>
+      <div className="flex items-baseline justify-between gap-2 px-2 pb-1 pt-2">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
       </div>
     );
 
@@ -659,7 +665,7 @@ export function QueuePanel({ onClose }: QueuePanelProps) {
     <aside
       ref={panelRef}
       className={cn(
-        "flex h-full flex-col overflow-y-auto overscroll-contain",
+        "flex h-full flex-col overflow-y-auto overscroll-contain bg-chrome text-foreground",
         // Dragging over rows must not select their text.
         draggedIndex !== null && "select-none",
       )}
@@ -667,95 +673,109 @@ export function QueuePanel({ onClose }: QueuePanelProps) {
     >
       <header
         className={cn(
-          "sticky top-0 z-10 flex shrink-0 items-center gap-1 bg-card",
-          collapsed ? "flex-col px-2 py-2" : "px-3 py-2.5",
+          "sticky top-0 z-10 flex shrink-0 flex-col bg-chrome",
+          collapsed ? "items-center px-2 py-3" : "gap-2 px-5 pb-3 pt-5",
         )}
       >
-        <Tooltip
-          side={collapsed ? "left" : "bottom"}
-          content={collapsed ? "Expand queue" : "Collapse queue"}
-        >
-          <button type="button" className={ICON_BUTTON} onClick={toggleQueuePanelCollapsed}>
-            {collapsed ? (
-              <BackIcon size={22} aria-hidden="true" />
-            ) : (
-              <ForwardIcon size={22} aria-hidden="true" />
-            )}
-            <span className="sr-only">{collapsed ? "Expand queue" : "Collapse queue"}</span>
-          </button>
-        </Tooltip>
+        <div className={cn("flex items-center", collapsed ? "justify-center" : "gap-1")}>
+          {!collapsed && (
+            <h2 className="min-w-0 flex-1 truncate text-lg font-semibold text-foreground">Queue</h2>
+          )}
+
+          <Tooltip
+            side={collapsed ? "left" : "bottom"}
+            content={collapsed ? "Expand queue" : "Collapse queue"}
+          >
+            <button type="button" className={ICON_BUTTON} onClick={toggleQueuePanelCollapsed}>
+              {collapsed ? (
+                <BackIcon size={18} aria-hidden="true" />
+              ) : (
+                <ForwardIcon size={18} aria-hidden="true" />
+              )}
+              <span className="sr-only">{collapsed ? "Expand queue" : "Collapse queue"}</span>
+            </button>
+          </Tooltip>
+
+          {/* Collapsed has no room for this, and the player bar's queue button already closes
+              the panel. */}
+          {!collapsed && (
+            <button
+              type="button"
+              className={ICON_BUTTON}
+              onClick={onClose}
+              aria-label="Close queue"
+              title="Close queue"
+            >
+              <CloseIcon size={18} aria-hidden="true" />
+            </button>
+          )}
+        </div>
 
         {!collapsed && (
-          <div className="flex min-w-0 flex-1 flex-col">
-            <h2 className="text-sm font-semibold text-foreground">Up next</h2>
-            <p className="flex items-center gap-1 truncate text-[11px] text-muted-foreground">
-              <span>{upcomingCount === 0 ? "Nothing queued" : `${upcomingCount} songs`}</span>
-              {remaining && (
-                <>
-                  <ClockIcon size={11} aria-hidden="true" />
-                  <span>{remaining}</span>
-                </>
-              )}
+          <div className="flex min-h-8 items-center gap-1">
+            <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+              {upcomingCount === 0 ? "Nothing queued" : `${upcomingCount} songs`}
+              {remaining && ` · ${remaining}`}
             </p>
-          </div>
-        )}
 
-        {!collapsed && upcomingCount > 0 && (
-          <>
-            <Tooltip content="Shuffle what's next">
-              <button
-                type="button"
-                className={ICON_BUTTON}
-                onClick={() => playerController.shuffleUpcomingQueue()}
-              >
-                <ShuffleIcon size={16} aria-hidden="true" />
-                <span className="sr-only">Shuffle what's next</span>
-              </button>
-            </Tooltip>
-            <Tooltip content="Shuffle the whole playlist">
-              <button
-                type="button"
-                className={ICON_BUTTON}
-                onClick={() => playerController.shuffleEntirePlaylist()}
-              >
-                <ShuffleActiveIcon size={16} aria-hidden="true" />
-                <span className="sr-only">Shuffle the whole playlist</span>
-              </button>
-            </Tooltip>
-            <Tooltip content="Save the queue as a playlist">
-              <button
-                type="button"
-                className={cn(ICON_BUTTON, saveState === "saved" && "text-primary")}
-                onClick={() => setSaveDraft((draft) => (draft === null ? "My queue" : null))}
-                aria-expanded={saveDraft !== null}
-              >
-                {saveState === "saving" ? (
-                  <Loader variant="spinner" size={15} />
-                ) : saveState === "saved" ? (
-                  <CheckIcon size={16} aria-hidden="true" />
-                ) : (
-                  <PlaylistAddIcon size={16} aria-hidden="true" />
-                )}
-                <span className="sr-only">Save the queue as a playlist</span>
-              </button>
-            </Tooltip>
-            <Tooltip content="Clear the queue">
-              <button
-                type="button"
-                className={cn(ICON_BUTTON, "hover:text-primary")}
-                onClick={() => playerController.clearUpcomingQueue()}
-              >
-                <TrashIcon size={16} aria-hidden="true" />
-                <span className="sr-only">Clear the queue</span>
-              </button>
-            </Tooltip>
-          </>
+            {upcomingCount > 0 && (
+              <>
+                <Tooltip content="Shuffle what's next">
+                  <button
+                    type="button"
+                    className={ICON_BUTTON}
+                    onClick={() => playerController.shuffleUpcomingQueue()}
+                  >
+                    <ShuffleIcon size={16} aria-hidden="true" />
+                    <span className="sr-only">Shuffle what's next</span>
+                  </button>
+                </Tooltip>
+                <Tooltip content="Shuffle the whole playlist">
+                  <button
+                    type="button"
+                    className={ICON_BUTTON}
+                    onClick={() => playerController.shuffleEntirePlaylist()}
+                  >
+                    <ListIcon size={16} aria-hidden="true" />
+                    <span className="sr-only">Shuffle the whole playlist</span>
+                  </button>
+                </Tooltip>
+                <Tooltip content="Save the queue as a playlist">
+                  <button
+                    type="button"
+                    className={ICON_BUTTON}
+                    onClick={() => setSaveDraft((draft) => (draft === null ? "My queue" : null))}
+                    aria-expanded={saveDraft !== null}
+                  >
+                    {saveState === "saving" ? (
+                      <Loader variant="spinner" size={15} />
+                    ) : saveState === "saved" ? (
+                      <CheckIcon size={16} aria-hidden="true" />
+                    ) : (
+                      <PlaylistAddIcon size={16} aria-hidden="true" />
+                    )}
+                    <span className="sr-only">Save the queue as a playlist</span>
+                  </button>
+                </Tooltip>
+                <Tooltip content="Clear the queue">
+                  <button
+                    type="button"
+                    className={ICON_BUTTON}
+                    onClick={() => playerController.clearUpcomingQueue()}
+                  >
+                    <TrashIcon size={16} aria-hidden="true" />
+                    <span className="sr-only">Clear the queue</span>
+                  </button>
+                </Tooltip>
+              </>
+            )}
+          </div>
         )}
       </header>
 
       {/* Opens under the header so the queue it is about stays in view. */}
       {!collapsed && saveDraft !== null && (
-        <div className="mx-2 mb-1 flex shrink-0 flex-col gap-2 rounded-xl bg-card p-2">
+        <div className="mx-3 mb-3 flex shrink-0 flex-col gap-2 rounded-lg bg-card p-2">
           <input
             autoFocus
             value={saveDraft}
@@ -765,16 +785,16 @@ export function QueuePanel({ onClose }: QueuePanelProps) {
               if (event.key === "Escape") setSaveDraft(null);
             }}
             aria-label="New playlist name"
-            className="w-full min-w-0 rounded-lg bg-background px-2.5 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-inset focus:ring-border"
+            className="h-8 w-full min-w-0 rounded bg-background px-2.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-inset focus:ring-border"
           />
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {upcomingCount + (currentTrack ? 1 : 0)} songs
             </span>
             <div className="flex gap-1.5">
               <button
                 type="button"
-                className="rounded-full px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="h-7 rounded px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => setSaveDraft(null)}
               >
                 Cancel
@@ -782,7 +802,7 @@ export function QueuePanel({ onClose }: QueuePanelProps) {
               <button
                 type="button"
                 disabled={saveState === "saving" || !saveDraft.trim()}
-                className="rounded-full bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-transform hover:scale-[1.02] active:scale-95 disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="h-7 rounded bg-foreground px-2.5 text-xs font-medium text-background disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => void handleSaveQueue()}
               >
                 {saveState === "saving" ? "Saving..." : "Save"}
@@ -795,69 +815,56 @@ export function QueuePanel({ onClose }: QueuePanelProps) {
       {/* The track playing right now, pinned above the list. Without it the panel opens on a
           list of songs with no anchor — you can see what is next but not what it follows. */}
       {currentTrack && (
-        <div
-          className={cn(
-            "flex shrink-0 items-center rounded bg-primary/5",
-            collapsed ? "mx-2 mb-1 justify-center p-1.5" : "mx-2 mb-1 gap-2.5 p-2",
+        <div className={cn("flex shrink-0 flex-col gap-1.5", collapsed ? "mx-1.5 mb-1" : "mx-3 mb-2")}>
+          {!collapsed && (
+            <span className="px-2 text-xs text-muted-foreground">
+              {isPlaying ? "Now playing" : "Paused"}
+            </span>
           )}
-        >
-          <span className="relative shrink-0">
+          <div
+            className={cn(
+              "flex items-center rounded bg-card",
+              collapsed ? "justify-center p-1.5" : "gap-3 px-2 py-1.5",
+            )}
+          >
             <TrackArtwork
-              className={cn(
-                "rounded ring-1 ring-primary/60",
-                collapsed ? "size-11" : "size-10",
-              )}
+              className={cn("shrink-0 rounded", collapsed ? "size-11" : "size-10")}
               size={collapsed ? 44 : 40}
               artworkUrl={currentTrack.artworkUrl}
               iconSize={collapsed ? 20 : 18}
             />
-            {/*
-              The same meter the track rows use — one now-playing indicator across the app,
-              rather than two hand-rolled ones that drift apart.
 
-              On a scrim covering the whole cover, not floated over the bottom edge: these are
-              accent-tinted bars a few pixels tall, and against a busy album cover they were
-              effectively invisible. Same treatment as the hover position badge below.
-            */}
-            {isPlaying && (
-              <span
-                className="absolute inset-0 grid place-items-center rounded bg-background/60 backdrop-blur-[2px]"
-                aria-hidden="true"
-              >
-                <MusicVisualizer
-                  bars={4}
-                  className="[--music-gap:2px] [--music-height:16px] [--music-width:20px]"
-                />
-              </span>
+            {!collapsed && (
+              <>
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate text-sm font-semibold text-accent-text">
+                    {currentTrack.title}
+                  </span>
+                  <ArtistLinks
+                    className="truncate text-[13px] text-muted-foreground"
+                    artists={currentTrack.artists}
+                    fallback={currentTrack.artist}
+                  />
+                </span>
+                {currentTrack.durationSec ? (
+                  <time className="shrink-0 text-[13px] tabular-nums text-muted-foreground">
+                    {formatMinutesSeconds(currentTrack.durationSec)}
+                  </time>
+                ) : null}
+              </>
             )}
-          </span>
-
-          {!collapsed && (
-            <span className="flex min-w-0 flex-col">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-primary">
-                {isPlaying ? "Now playing" : "Paused"}
-              </span>
-              <span className="truncate text-sm font-medium text-foreground">
-                {currentTrack.title}
-              </span>
-              <ArtistLinks
-                className="truncate text-xs text-muted-foreground"
-                artists={currentTrack.artists}
-                fallback={currentTrack.artist}
-              />
-            </span>
-          )}
+          </div>
         </div>
       )}
 
       {upcomingCount === 0 ? (
         collapsed ? null : (
-          <p className="px-3 py-8 text-center text-sm text-muted-foreground">
+          <p className="px-5 py-8 text-center text-sm text-muted-foreground">
             Nothing queued. Songs you add with "Play next" land here.
           </p>
         )
       ) : (
-        <div className={cn("flex flex-col gap-0.5 pb-2", collapsed ? "px-1.5" : "px-2")}>
+        <div className={cn("flex flex-col gap-0.5 pb-3", collapsed ? "px-1.5" : "px-3")}>
           {manual.length > 0 && (
             <>
               {sectionLabel("Added by you", manual.length)}
@@ -866,7 +873,7 @@ export function QueuePanel({ onClose }: QueuePanelProps) {
           )}
           {automatic.length > 0 && (
             <>
-              {manual.length > 0 && sectionLabel("Up next", automatic.length)}
+              {sectionLabel("Up next", automatic.length)}
               {renderRows(automatic.slice(0, visibleAutomaticCount))}
               {automatic.length > visibleAutomaticCount && (
                 <ShowMoreQueueButton
@@ -879,18 +886,6 @@ export function QueuePanel({ onClose }: QueuePanelProps) {
             </>
           )}
         </div>
-      )}
-
-      {/* Collapsed has no room for a close button in the header, and the player bar's queue
-          button already closes the panel, so this only exists when expanded. */}
-      {!collapsed && (
-        <button
-          type="button"
-          className="mx-2 mb-2 mt-auto shrink-0 rounded py-1.5 text-xs text-muted-foreground transition-colors hover:bg-card hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={onClose}
-        >
-          Hide queue
-        </button>
       )}
     </aside>
   );

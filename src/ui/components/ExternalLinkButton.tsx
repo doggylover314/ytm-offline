@@ -15,7 +15,7 @@ interface ExternalLinkButtonProps {
   label: string;
   url: string;
   /**
-   * `quiet` is a text link for a header row; `card` is a filled pill for a button group.
+   * `quiet` is a text link for a header row; `card` is a filled button for a button group.
    * Two named looks rather than a pile of style props — there are only ever these two.
    */
   variant?: "quiet" | "card";
@@ -90,16 +90,16 @@ export function ExternalLinkButton({
       title={url}
       aria-label={`${label} — opens ${url} in your browser`}
       className={cn(
-        "group/link flex items-center gap-2 rounded-full transition-colors",
+        "group/link flex items-center gap-1.5 rounded transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         variant === "card"
-          ? "bg-card px-3.5 py-2 text-sm font-medium text-foreground hover:bg-muted"
+          ? "h-9 bg-muted px-3 text-sm font-medium text-foreground hover:bg-border"
           : "px-1 text-sm text-muted-foreground hover:text-foreground",
         className,
       )}
     >
       {outcome === "copied" ? (
-        <CheckActiveIcon size={16} aria-hidden="true" className="text-primary" />
+        <CheckActiveIcon size={16} aria-hidden="true" />
       ) : (
         icon ?? null
       )}
@@ -109,7 +109,7 @@ export function ExternalLinkButton({
         <LinkIcon
           size={13}
           aria-hidden="true"
-          className="opacity-0 transition-opacity group-hover/link:opacity-60"
+          className="opacity-0 transition-opacity group-hover/link:opacity-100"
         />
       )}
       {/* Announced rather than only coloured, so the outcome is not sight-only. */}

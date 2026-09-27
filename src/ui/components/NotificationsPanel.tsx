@@ -31,33 +31,39 @@ function NotificationRow({
     <button
       type="button"
       className={cn(
-        "flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-colors",
+        "flex w-full items-start gap-3 rounded px-2 py-1.5 text-left transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-        canOpen ? "hover:bg-white/[0.06]" : "cursor-default",
-        !notification.read && "bg-primary/[0.07]",
+        canOpen ? "hover:bg-muted" : "cursor-default",
       )}
       disabled={!canOpen}
       onClick={() => onOpen(notification)}
     >
       {notification.thumbnailUrl ? (
         <img
-          className="size-10 shrink-0 rounded-lg object-cover"
+          className="size-10 shrink-0 rounded object-cover"
           src={notification.thumbnailUrl}
           alt=""
           loading="lazy"
         />
       ) : (
-        <span className="size-10 shrink-0 rounded-lg bg-muted" aria-hidden="true" />
+        <span className="size-10 shrink-0 rounded bg-muted" aria-hidden="true" />
       )}
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="line-clamp-2 text-sm text-foreground">{notification.text}</span>
+        <span
+          className={cn(
+            "line-clamp-2 text-sm text-foreground",
+            !notification.read && "font-semibold",
+          )}
+        >
+          {notification.text}
+        </span>
         {notification.sentAtText ? (
-          <span className="text-xs text-muted-foreground">{notification.sentAtText}</span>
+          <span className="text-[13px] text-muted-foreground">{notification.sentAtText}</span>
         ) : null}
       </span>
       {!notification.read && (
         <span
-          className="mt-1.5 size-2 shrink-0 rounded-full bg-primary"
+          className="mt-1.5 size-2 shrink-0 rounded-[1px] bg-foreground"
           aria-label="Unread"
         />
       )}
@@ -135,7 +141,7 @@ export function NotificationsPanel({ signedIn }: { signedIn: boolean }) {
       open={open}
       onOpenChange={setOpen}
       side="bottom"
-      className="w-96 max-w-[calc(100vw-2rem)] p-2"
+      className="w-96 max-w-[calc(100vw-2rem)] p-1.5"
       trigger={
         <Tooltip side="bottom" content="Notifications">
           <Button
@@ -149,13 +155,13 @@ export function NotificationsPanel({ signedIn }: { signedIn: boolean }) {
             onClick={() => setOpen((value) => !value)}
           >
             {unseen > 0 ? (
-              <BookmarkActiveIcon size={16} aria-hidden="true" className="text-primary" />
+              <BookmarkActiveIcon size={16} aria-hidden="true" />
             ) : (
-              <BookmarkIcon size={16} aria-hidden="true" className="opacity-40" />
+              <BookmarkIcon size={16} aria-hidden="true" />
             )}
             {unseen > 0 && (
               <span
-                className="absolute right-0.5 top-0.5 min-w-3.5 rounded-full bg-primary px-1 text-[10px] font-semibold leading-3.5 text-primary-foreground"
+                className="absolute right-0.5 top-0.5 min-w-3.5 rounded-[2px] bg-foreground px-1 text-[10px] font-semibold leading-3.5 text-background"
                 aria-hidden="true"
               >
                 {unseen > 9 ? "9+" : unseen}
@@ -165,7 +171,7 @@ export function NotificationsPanel({ signedIn }: { signedIn: boolean }) {
         </Tooltip>
       }
     >
-      <div className="flex items-center justify-between gap-2 px-2 pb-1.5 pt-1">
+      <div className="flex items-center justify-between gap-2 pb-1 pl-2.5">
         <span className="text-sm font-semibold text-foreground">Notifications</span>
         <Button
           variant="ghost"

@@ -326,17 +326,23 @@ export function SearchOverlay({
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex justify-center bg-muted/40 pt-[12vh] backdrop-blur-sm" onMouseDown={onDismiss ?? onClose}>
+    // No scrim: surfaces here are opaque, so the panel is set apart by its own step in grey.
+    <div className="fixed inset-0 z-[70] flex justify-center pt-[12vh]" onMouseDown={onDismiss ?? onClose}>
       <section
-        className="flex max-h-[70vh] w-[min(40rem,92vw)] flex-col overflow-hidden rounded-2xl bg-card shadow-2xl"
+        className="flex max-h-[70vh] w-[min(600px,92vw)] flex-col self-start overflow-hidden rounded-lg bg-card p-1.5 shadow-[inset_0_0_0_1px_var(--color-border)]"
         data-onboarding="search-panel"
         role="dialog"
         aria-modal="true"
         aria-label="Search artists, songs, playlists, and albums"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className={cn("flex items-center gap-2.5 px-4 py-3 bg-muted/50 text-muted-foreground [&_input]:min-w-0 [&_input]:flex-1 [&_input]:bg-transparent [&_input]:text-base [&_input]:text-foreground [&_input]:outline-none", selectedIndex === 0 && "bg-muted/70 text-foreground")}>
-          <SearchIcon size={21} />
+        <div
+          className={cn(
+            "flex h-11 shrink-0 items-center gap-2.5 rounded bg-card px-3.5 text-muted-foreground",
+            selectedIndex === 0 && "shadow-[inset_0_0_0_2px_var(--color-foreground)]",
+          )}
+        >
+          <SearchIcon size={20} className="shrink-0" aria-hidden="true" />
           <input
             ref={inputRef}
             value={query}
@@ -346,16 +352,20 @@ export function SearchOverlay({
               setSelectedIndex(0);
             }}
             onKeyDown={handleKeyDown}
-            placeholder="Search artists, songs, playlists, and albums"
+            placeholder="Search songs, albums, artists"
             aria-label="Search artists, songs, playlists, and albums"
+            className="min-w-0 flex-1 bg-transparent text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
           />
-          {isLoading && <span className="px-4   text-center text-sm text-muted-foreground">Searching</span>}
+          {isLoading && <span className="shrink-0 text-[13px] text-muted-foreground">Searching</span>}
         </div>
 
         {preview && (
           <button
             type="button"
-            className={cn("flex w-full items-center gap-2.5 rounded-none p-2.5  text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring", selectedIndex === 1 && "bg-muted text-foreground")}
+            className={cn(
+              "mt-1.5 flex w-full items-center gap-3 rounded px-2 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              selectedIndex === 1 ? "bg-muted" : "hover:bg-muted",
+            )}
             onMouseEnter={() => setSelectedIndex(1)}
             onContextMenu={preview.type === "track"
               ? (event) => openTrackMenu(event, preview.value)
@@ -367,125 +377,102 @@ export function SearchOverlay({
             onClick={openPreview}
           >
             <TrackArtwork
-              className="size-12 shrink-0 rounded-md object-cover"
+              className="size-12 shrink-0 rounded bg-muted object-cover"
               size={48}
               artworkUrl={preview.value.artworkUrl}
-              iconSize={32}
+              iconSize={24}
               loading="eager"
               variant={preview.type === "artist" ? "artist" : "track"}
             />
-            <span className="flex min-w-0 flex-1 flex-col text-left [&_small]:truncate [&_small]:text-xs [&_small]:text-muted-foreground [&_strong]:truncate [&_strong]:text-sm [&_strong]:font-medium">
-              <strong>
+            <span className="flex min-w-0 flex-1 flex-col text-left">
+              <strong className="truncate text-sm font-semibold text-foreground">
                 {preview.type === "artist" ? preview.value.name : preview.value.title}
               </strong>
-              <span>
+              <span className="truncate text-[13px] text-muted-foreground">
                 {preview.type === "playlist"
-                  ? `Playlist - ${preview.value.owner}`
+                  ? `Playlist · ${preview.value.owner}`
                   : preview.type === "album"
-                    ? `Album - ${preview.value.artist}`
+                    ? `Album · ${preview.value.artist}`
                     : preview.type === "artist"
                       ? preview.value.subscriberCount || "Artist"
                     : preview.value.artist}
               </span>
             </span>
-            <span className="flex items-center gap-1 [&_kbd]:rounded [&_kbd]:bg-card [&_kbd]:px-1.5 [&_kbd]:py-0.5 [&_kbd]:font-sans">
+            <span className="shrink-0 px-1 text-[13px] font-medium text-muted-foreground">
               {preview.type === "track" ? "Play" : "Open"}
             </span>
           </button>
         )}
 
         {suggestions.length > 0 && (
-          <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto ">
+          <div className="mt-1.5 flex min-h-0 flex-1 flex-col overflow-y-auto">
             {suggestions.map((suggestion, index) => {
               const itemIndex = 1 + previewOffset + index;
               return (
                 <button
                   key={suggestion}
                   type="button"
-                  className={`${"flex w-full items-center gap-2.5 rounded-none px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"} ${
-                    selectedIndex === itemIndex ? "bg-muted/50 text-foreground" : ""
-                  }`}
+                  className={cn(
+                    "flex h-9 w-full shrink-0 items-center gap-2.5 rounded px-2.5 text-left text-sm text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                    selectedIndex === itemIndex ? "bg-muted" : "hover:bg-muted",
+                  )}
                   onMouseEnter={() => setSelectedIndex(itemIndex)}
                   onClick={() => submitQuery(suggestion, false)}
                 >
-                  <SearchIcon size={16} />
-                  <span>{suggestion}</span>
+                  <SearchIcon size={16} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <span className="truncate">{suggestion}</span>
                 </button>
               );
             })}
           </div>
         )}
 
-     
         {visibleRecentSearches.length > 0 && (
-  <section className="  pb-2">
- 
+          <section className="mt-1.5 flex flex-col" aria-label="Recent searches">
+            {visibleRecentSearches.map((recentSearch, index) => {
+              const itemIndex = 1 + previewOffset + suggestions.length + index;
+              const active = selectedIndex === itemIndex;
 
- 
-      {visibleRecentSearches.map((recentSearch, index) => {
-        const itemIndex =
-          1 + previewOffset + suggestions.length + index;
+              return (
+                <div
+                  key={recentSearch}
+                  onMouseEnter={() => setSelectedIndex(itemIndex)}
+                  className={cn(
+                    "group flex h-9 items-center rounded transition-colors",
+                    active ? "bg-muted" : "hover:bg-muted",
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={() => submitQuery(recentSearch, false)}
+                    className="flex h-full min-w-0 flex-1 items-center gap-2.5 rounded px-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                  >
+                    <ClockIcon size={16} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+                    <span className="truncate text-sm text-foreground">{recentSearch}</span>
+                  </button>
 
-        const active = selectedIndex === itemIndex;
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeRecentSearch(recentSearch);
+                    }}
+                    aria-label={`Remove ${recentSearch}`}
+                    className={cn(
+                      "mr-1 grid size-7 shrink-0 place-items-center rounded text-muted-foreground transition-colors",
+                      "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+                      "hover:bg-card hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    )}
+                  >
+                    <CloseIcon size={14} />
+                  </button>
+                </div>
+              );
+            })}
+          </section>
+        )}
 
-        return (
-          <div
-            key={recentSearch}
-            onMouseEnter={() => setSelectedIndex(itemIndex)}
-            className={cn(
-              "group flex items-center rounded-none transition-all",
-              active
-                ? "bg-muted text-accent-foreground"
-                : "hover:bg-muted"
-            )}
-          >
-            <button
-              type="button"
-              onClick={() => submitQuery(recentSearch, false)}
-              className="flex flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-left focus-visible:outline-none"
-            >
-              <div
-                className={cn(
-                  "flex size-8 items-center justify-center rounded-lg transition-colors",
-                  active
-                    ? "bg-background/50"
-                    : "bg-muted group-hover:bg-background"
-                )}
-              >
-                <ClockIcon
-                  size={15}
-                  className="text-muted-foreground"
-                />
-              </div>
-
-              <span className="truncate text-sm font-medium">
-                {recentSearch}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                removeRecentSearch(recentSearch);
-              }}
-              aria-label={`Remove ${recentSearch}`}
-              className={cn(
-                "mr-2 flex size-8 items-center justify-center rounded-lg transition-all",
-                "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-                "hover:bg-background hover:text-destructive"
-              )}
-            >
-              <CloseIcon size={14} />
-            </button>
-          </div>
-        );
-      })}
-  
-  </section>
-)}
-
-        <footer className="flex items-center gap-3 px-4 py-2 text-xs text-muted-foreground">
+        <footer className="mt-1.5 flex items-center gap-4 px-2.5 py-1.5 text-xs text-muted-foreground">
           <span>Enter search</span>
           <span>Shift or {primaryModifierLabel} + Enter new tab</span>
           <span>Esc close</span>

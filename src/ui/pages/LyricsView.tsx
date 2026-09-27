@@ -19,53 +19,45 @@ import { getOfflineLyrics } from "../../player/offlineStore";
 import { playerUIStore, usePlayerUIState } from "../stores/playerUIStore";
 import { ArtistLinks } from "../components/ArtistLinks";
 import { TrackArtwork } from "../components/TrackArtwork";
-import { setAmbientArtwork } from "../stores/ambientArtworkStore";
 import { OFFSET_STEP_SEC, setLyricsOffset, useLyricsOffset } from "../settings/lyricsOffset";
 import { useLyricsFontScale } from "../settings/lyricsFontScale";
 import { TRANSLATION_OFF, useLyricsTranslationLang } from "../settings/lyricsTranslation";
 import { translateLines } from "../../datasource/translate";
-import { findActiveLineIndex, getLineProgress, isSyncedLyrics } from "./lyricsTiming";
+import { findActiveLineIndex, isSyncedLyrics } from "./lyricsTiming";
 
 /** How long a manual scroll keeps the auto-follow parked. */
 const AUTO_SCROLL_RESUME_MS = 4500;
 /** Sampling rate while paused — see the frame loop for why it is not zero. */
 const PAUSED_SAMPLE_MS = 250;
 
-/**
- * Depth by distance from the active line: opacity, then blur.
- *
- * The blur is what makes the column read as a focal plane rather than a dimmed list, but it
- * is a GPU filter and every blurred node is its own layer — so it stops after four lines
- * either side. Past that the opacity alone is low enough that nobody can tell.
- */
-const DEPTH = [
-  { opacity: 1, blur: 0 },
-  { opacity: 0.55, blur: 0.7 },
-  { opacity: 0.36, blur: 1.5 },
-  { opacity: 0.24, blur: 2.4 },
-  { opacity: 0.16, blur: 3.2 },
-  { opacity: 0.12, blur: 0 },
-];
+/** Where a synced line sits relative to the one being sung. */
+type LineState = "past" | "current" | "upcoming";
 
-/*
- * Type scale, driven by the container's width so opening the queue panel reflows it rather
- * than overflowing. The Tailwind size classes on the elements are a floor, not decoration:
- * if these ever fail to resolve the lines fall back to a display size instead of to 16px.
- */
-const LINE_FONT_SIZE = "clamp(1.625rem, 2.6cqi + 0.85rem, 2.875rem)";
-const LINE_GAP = "clamp(0.95rem, 1.2cqi + 0.45rem, 1.9rem)";
+const LINE_COLOR: Record<LineState, string> = {
+  past: "text-[#6e6e6e] hover:text-foreground",
+  current: "text-foreground",
+  upcoming: "text-muted-foreground hover:text-foreground",
+};
+
+/* Scaled by the lyrics font-size setting. */
+const LINE_FONT_SIZE = "28px";
+const LINE_GAP = "18px";
 /** Unsynced lyrics are read, not followed — smaller, with the leading a paragraph wants. */
-const READING_FONT_SIZE = "clamp(1.125rem, 1cqi + 0.7rem, 1.5rem)";
+const READING_FONT_SIZE = "20px";
 
 const STATUS_DOT: Record<LyricsSourceStatus, string> = {
-  hit: "bg-primary",
-  miss: "bg-muted-foreground/40",
-  timeout: "bg-destructive/60",
+  hit: "bg-foreground",
+  miss: "bg-muted-foreground",
+  timeout: "bg-destructive",
   error: "bg-destructive",
-  skipped: "bg-muted-foreground/20",
+  skipped: "bg-border",
 };
 
 const ARROW_KEYS = ["ArrowDown", "ArrowUp", "Home", "End"];
+
+const CORNER_BUTTON =
+  "flex size-9 items-center justify-center rounded text-foreground transition-colors hover:bg-card " +
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 interface LyricsViewProps {
   onClose: () => void;
@@ -106,8 +98,6 @@ export function LyricsView({ onClose }: LyricsViewProps) {
      array identity every render would tear it down sixty times a second. */
   const linesRef = useRef(lines);
   linesRef.current = lines;
-  const durationRef = useRef(track?.durationSec);
-  durationRef.current = track?.durationSec;
 
   /** Lines a listener can actually land on: blanks are instrumental beats, not targets. */
   const seekableIndices = useMemo(() => {
@@ -117,13 +107,6 @@ export function LyricsView({ onClose }: LyricsViewProps) {
     });
     return indices;
   }, [lyrics]);
-
-  // The same wash Layout paints for album and playlist pages, so the chrome above this view
-  // stays tinted by the cover instead of ending at a hard edge.
-  useEffect(() => {
-    setAmbientArtwork(track?.artworkUrl ?? null);
-    return () => setAmbientArtwork(null);
-  }, [track?.artworkUrl]);
 
   useEffect(() => {
     const update = () => setIsOnline(navigator.onLine);
@@ -244,12 +227,6 @@ export function LyricsView({ onClose }: LyricsViewProps) {
         current = next;
         setActiveIndex(next);
       }
-
-      if (reduce || next < 0) return;
-      /* The sweep is written straight onto the node. It changes every frame by definition,
-         so routing it through state would undo the optimisation directly above. */
-      const progress = getLineProgress(currentLines, next, time, durationRef.current);
-      lineRefs.current[next]?.style.setProperty("--sweep", `${(progress * 100).toFixed(1)}%`);
     };
 
     sample();
@@ -272,7 +249,7 @@ export function LyricsView({ onClose }: LyricsViewProps) {
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [isSynced, isPlaying, lyrics, offset, reduce]);
+  }, [isSynced, isPlaying, lyrics, offset]);
 
   /*
    * Translation is best-effort and entirely optional: a failure leaves `translations` null
@@ -415,42 +392,9 @@ export function LyricsView({ onClose }: LyricsViewProps) {
 
   return (
     <section
-      className="@container/lyrics relative flex h-full min-h-0 w-full flex-col overflow-hidden"
+      className="@container/lyrics relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-background"
       aria-label="Lyrics"
     >
-      {/*
-        The cover, oversized and blurred past recognition, is the only colour on the screen.
-        Sized at the smallest variant deliberately: nothing above 120px survives the blur, so a
-        larger source would cost texture memory and show nothing.
-
-        The radius is 32px, not 70px. This is the most expensive single element in the app: a
-        136%-of-window box, so ~2600x1470 on a 1080p display, which is a 15 MB layer before the
-        filter has done anything — and blur cost scales with radius, because Chromium runs more
-        downsample passes and allocates intermediates expanded by it.
-
-        70px was buying almost nothing. The source is a 120px image stretched roughly twenty
-        times, so one source pixel already covers ~20 display pixels and the upscale is doing
-        the softening; 70px of filter was ~3.5 source pixels of extra blur on top of that.
-        32px is the radius `Layout` settled on for the same trick at the same upscale, for the
-        same reason. Toggle Settings > Potato PC > Manage > "Blur and colour filters" to see
-        the whole class of effect on and off.
-      */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
-        {track?.artworkUrl && (
-          <div
-            key={track.artworkUrl}
-            data-fx="ambient"
-            className={cn(
-              "absolute -inset-[18%] opacity-50 blur-[32px] saturate-[1.7] rounded-none",
-              !reduce && "lyrics-drift",
-            )}
-          >
-            <TrackArtwork className="size-full rounded-none" size={120} artworkUrl={track.artworkUrl} iconSize={0} />
-          </div>
-        )}
-        <div className="absolute inset-0 bg-gradient-to-b from-background/75 via-background/88 to-background" />
-      </div>
-
       {/*
         The buttons below are navigable but never announced as they light up, so a listener
         using a screen reader would get a static sheet and no sense of where the song is.
@@ -459,44 +403,44 @@ export function LyricsView({ onClose }: LyricsViewProps) {
         {isSynced && activeIndex >= 0 ? lines[activeIndex]?.text ?? "" : ""}
       </p>
 
-      <div className="absolute right-4 top-4 z-20 flex items-center gap-2">
+      <div className="absolute right-4 top-4 z-20 flex items-center gap-1">
         <button
           type="button"
-          className="flex size-9 items-center justify-center rounded-full bg-card/60 text-muted-foreground backdrop-blur transition-colors hover:bg-card hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className={CORNER_BUTTON}
           onClick={() => playerUIStore.setLyricsFullscreen(!isFullscreen)}
           aria-pressed={isFullscreen}
           aria-label={isFullscreen ? "Exit full screen" : "Full screen"}
           title={isFullscreen ? "Exit full screen (Esc)" : "Full screen"}
         >
-          {isFullscreen ? <QuitFullScreenIcon size={18} /> : <FullScreenIcon size={18} />}
+          {isFullscreen ? <QuitFullScreenIcon size={20} /> : <FullScreenIcon size={20} />}
         </button>
         <button
           type="button"
-          className="flex size-9 items-center justify-center rounded-full bg-card/60 text-muted-foreground backdrop-blur transition-colors hover:bg-card hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className={CORNER_BUTTON}
           onClick={onClose}
           aria-label="Close lyrics"
           title={isFullscreen ? "Close lyrics" : "Close lyrics (Esc)"}
         >
-          <CloseIcon size={19} />
+          <CloseIcon size={20} />
         </button>
       </div>
 
-      <div className="relative flex min-h-0 flex-1 flex-col @4xl/lyrics:flex-row">
+      <div className="flex min-h-0 flex-1 flex-col @4xl/lyrics:grid @4xl/lyrics:grid-cols-[18rem_minmax(0,1fr)] @4xl/lyrics:grid-rows-[minmax(0,1fr)] @4xl/lyrics:gap-12 @4xl/lyrics:px-12 @6xl/lyrics:grid-cols-[360px_minmax(0,1fr)] @6xl/lyrics:gap-20 @6xl/lyrics:px-20">
         {/* Wide enough for two columns: the song gets a poster, the lyrics get the rest. */}
-        <aside className="hidden shrink-0 flex-col gap-6 px-8 py-8 @4xl/lyrics:flex @4xl/lyrics:w-[19rem] @6xl/lyrics:w-[22rem]">
+        <aside className="hidden min-w-0 flex-col gap-5 py-12 @4xl/lyrics:flex">
           <TrackArtwork
             artworkUrl={track?.artworkUrl}
-            size={288}
-            className="aspect-square w-full   shadow-2xl shadow-black/50"
-            iconSize={40}
+            size={360}
+            className="aspect-square w-full rounded-lg"
+            iconSize={48}
             loading="eager"
           />
-          <div className="min-w-0">
-            <h1 className="text-balance text-2xl font-bold leading-tight tracking-[-0.03em] text-foreground">
+          <div className="flex min-w-0 flex-col gap-1">
+            <h1 className="text-balance text-2xl font-semibold leading-tight text-foreground">
               {track?.title ?? "Nothing playing"}
             </h1>
             {track && (
-              <p className="mt-1.5 text-sm text-muted-foreground">
+              <p className="text-base text-muted-foreground">
                 <ArtistLinks artists={track.artists} fallback={track.artist} />
               </p>
             )}
@@ -504,16 +448,16 @@ export function LyricsView({ onClose }: LyricsViewProps) {
         </aside>
 
         {/* Narrow: the poster would eat the column, so the song identifies itself in a strip. */}
-        <header className="flex shrink-0 items-center gap-3.5 px-6 pb-3 pr-16 pt-5 @4xl/lyrics:hidden">
+        <header className="flex shrink-0 items-center gap-3 px-6 pb-3 pr-24 pt-5 @4xl/lyrics:hidden">
           <TrackArtwork
             artworkUrl={track?.artworkUrl}
             size={56}
-            className="size-14   shadow-lg shadow-black/30"
+            className="size-14 rounded"
             iconSize={20}
             loading="eager"
           />
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-lg font-bold tracking-[-0.02em] text-foreground">
+            <h1 className="truncate text-lg font-semibold text-foreground">
               {track?.title ?? "Nothing playing"}
             </h1>
             {track && (
@@ -528,7 +472,7 @@ export function LyricsView({ onClose }: LyricsViewProps) {
           <div
             ref={scrollerRef}
             /* `relative` makes this the offsetParent the scroll maths measures against. */
-            className="relative h-full overflow-y-auto overscroll-contain px-6 [scrollbar-width:none] @4xl/lyrics:pr-10 [&::-webkit-scrollbar]:hidden"
+            className="relative h-full overflow-y-auto overscroll-contain px-6 [scrollbar-width:none] @4xl/lyrics:px-0 @4xl/lyrics:pr-16 [&::-webkit-scrollbar]:hidden"
             onWheel={pauseFollow}
             onPointerDown={pauseFollow}
             onTouchMove={pauseFollow}
@@ -537,8 +481,8 @@ export function LyricsView({ onClose }: LyricsViewProps) {
               className={cn(
                 "mx-auto max-w-3xl @4xl/lyrics:mx-0",
                 // Half a viewport of air top and bottom so the first and last line can still
-                // reach the centre, where the highlight lives.
-                isSynced ? "py-[44vh]" : "pb-20 pt-4",
+                // reach the centre, where the current line is kept.
+                isSynced ? "py-[44vh]" : "pb-20 pt-4 @4xl/lyrics:pt-[72px]",
               )}
             >
               {isLoading && <LyricsSkeleton />}
@@ -554,10 +498,9 @@ export function LyricsView({ onClose }: LyricsViewProps) {
 
               {!isLoading && hasLines && (
                 <div
-                  className="flex flex-col pl-5"
+                  className="flex flex-col"
                   style={{
-                    /* Multiplied rather than replaced: the clamp still does the adapting, the
-                       preference just moves the whole scale up or down with it. */
+                    /* The font-size preference scales the whole column, gaps included. */
                     fontSize: `calc(${isSynced ? LINE_FONT_SIZE : READING_FONT_SIZE} * ${fontScale})`,
                     gap: isSynced ? `calc(${LINE_GAP} * ${fontScale})` : undefined,
                   }}
@@ -569,17 +512,14 @@ export function LyricsView({ onClose }: LyricsViewProps) {
                         key={`${index}:${line.text}`}
                         index={index}
                         text={line.text}
-                        /* Clamped to the table length so every line past the ramp shares one
-                           prop value — otherwise line 300 of a long song would re-render on
-                           every flip just because its distance went from 287 to 286. */
-                        distance={
-                          activeIndex < 0
-                            ? 1
-                            : Math.min(DEPTH.length - 1, Math.abs(index - activeIndex))
+                        /* Only the lines crossing the current one change state, so a flip
+                           re-renders two lines rather than the whole sheet. */
+                        state={
+                          activeIndex < 0 || index > activeIndex
+                            ? "upcoming"
+                            : index === activeIndex ? "current" : "past"
                         }
-                        isActive={index === activeIndex}
                         isTabbable={index === tabbableIndex}
-                        reduce={reduce}
                         translation={translations?.[index] || undefined}
                         onSeek={seekLine}
                         onFocusLine={setFocusIndex}
@@ -589,7 +529,7 @@ export function LyricsView({ onClose }: LyricsViewProps) {
                       <p
                         key={`${index}:${line.text}`}
                         ref={(element) => registerLine(index, element)}
-                        className="text-pretty py-1 leading-relaxed text-foreground/85"
+                        className="text-pretty py-1 leading-relaxed text-foreground"
                       >
                         {line.text}
                         {translations?.[index] && (
@@ -605,35 +545,25 @@ export function LyricsView({ onClose }: LyricsViewProps) {
             </div>
           </div>
 
-          {/* Fades the column into the chrome at both ends instead of cutting lines in half. */}
-          <div
-            className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-gradient-to-b from-background to-transparent"
-            aria-hidden="true"
-          />
-          <div
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-background to-transparent"
-            aria-hidden="true"
-          />
-
           {isFollowPaused && activeIndex >= 0 && (
             <button
               type="button"
-              className="absolute bottom-5 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-card px-4 py-2 text-sm font-medium text-foreground shadow-xl shadow-black/30 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="absolute bottom-5 left-1/2 flex h-9 -translate-x-1/2 items-center gap-2 rounded bg-muted px-4 text-sm font-medium text-foreground transition-colors hover:bg-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onClick={resumeFollow}
               aria-label="Resync lyrics to current playback position"
             >
-              <RefreshIcon size={15} aria-hidden="true" />
+              <RefreshIcon size={16} aria-hidden="true" />
               Back to current line
             </button>
           )}
         </div>
       </div>
 
-      <footer className="relative flex h-10 shrink-0 items-center justify-between gap-3 px-6 pb-2 text-xs text-muted-foreground">
+      <footer className="flex h-10 shrink-0 items-center justify-between gap-3 px-6 pb-2 text-xs text-muted-foreground @4xl/lyrics:px-12 @6xl/lyrics:px-20">
         <span className="flex min-w-0 items-center gap-2">
           {timingLabel && (
             <span className="flex shrink-0 items-center gap-1.5">
-              <LyricsIcon size={13} aria-hidden="true" />
+              <LyricsIcon size={14} aria-hidden="true" />
               {timingLabel}
             </span>
           )}
@@ -652,10 +582,8 @@ export function LyricsView({ onClose }: LyricsViewProps) {
 interface SyncedLineProps {
   index: number;
   text: string;
-  distance: number;
-  isActive: boolean;
+  state: LineState;
   isTabbable: boolean;
-  reduce: boolean;
   /** Absent when translation is off, still loading, or could not be aligned to this line. */
   translation?: string;
   onSeek: (index: number) => void;
@@ -669,9 +597,9 @@ interface SyncedLineProps {
  * Windowing was the obvious answer to long sheets and the wrong one: this column's whole
  * design is centring maths against real `offsetTop` values, and a virtualiser that guesses
  * heights for unmounted lines breaks exactly that. The actual cost was never the DOM — it
- * was re-rendering all three hundred lines each time the active one advanced. With the
- * distance clamped to the depth ramp only the dozen lines whose appearance genuinely
- * changed re-render, so line count stops mattering and the scrolling stays honest.
+ * was re-rendering all three hundred lines each time the active one advanced. Since a line's
+ * only visual input is past/current/upcoming, a flip re-renders just the two lines crossing
+ * it, so line count stops mattering and the scrolling stays honest.
  *
  * Every callback prop is stable by construction; one inline arrow here would defeat the memo
  * and quietly restore the original cost.
@@ -679,43 +607,32 @@ interface SyncedLineProps {
 const SyncedLine = memo(function SyncedLine({
   index,
   text,
-  distance,
-  isActive,
+  state,
   isTabbable,
-  reduce,
   translation,
   onSeek,
   onFocusLine,
   register,
 }: SyncedLineProps) {
-  const depth = DEPTH[Math.min(distance, DEPTH.length - 1)];
   const attach = useCallback(
     (element: HTMLElement | null) => register(index, element),
     [index, register],
   );
 
-  // Check if there's letters
+  // Arabic script reads right to left, so the line takes that direction.
   const isArabic = /[\u0600-\u06FF]/.test(text);
 
   // An empty LRC line is a real instrumental beat, not junk. It keeps its slot so the timing
-  // stays honest, and announces itself when it comes up.
+  // stays honest, and takes the current line's colour when it comes up.
   if (!text.trim()) {
     return (
       <div
         ref={attach}
         aria-hidden="true"
-        className="flex items-center gap-1.5 py-1"
-        style={{ opacity: depth.opacity }}
+        className={cn("flex items-center gap-1.5 py-1 transition-colors duration-300", LINE_COLOR[state])}
       >
         {[0, 1, 2].map((dot) => (
-          <span
-            key={dot}
-            className={cn(
-              "size-2 rounded-full bg-foreground/60",
-              isActive && !reduce && "animate-pulse",
-            )}
-            style={isActive ? { animationDelay: `${dot * 180}ms` } : undefined}
-          />
+          <span key={dot} className="size-2 rounded-xs bg-current" />
         ))}
       </div>
     );
@@ -725,43 +642,18 @@ const SyncedLine = memo(function SyncedLine({
     <button
       ref={attach}
       type="button"
-      // The direction of the language
       dir={isArabic ? "rtl" : "ltr"}
       tabIndex={isTabbable ? 0 : -1}
-      aria-current={isActive ? "true" : undefined}
+      aria-current={state === "current" ? "true" : undefined}
       onFocus={() => onFocusLine(index)}
-      // Using (text-start) instead of (text-left)
+      // `text-start` rather than `text-left`, so right-to-left lines align to their own edge.
       className={cn(
-        "group relative origin-left text-pretty text-start font-bold leading-[1.16] tracking-[-0.035em]",
-        "transition-[opacity,filter,color] duration-500 ease-out",
+        "rounded text-pretty text-start font-semibold leading-[1.25] transition-colors duration-300",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        /*
-         * The sweep paints its own colour through background-clip, so the active line must
-         * not also carry a text colour — and it is only safe while the sampling loop is
-         * running. Under reduced motion nothing writes `--sweep`, so the line would stick at
-         * the gradient's 0% end and render dimmer than its neighbours.
-         */
-        isActive && !reduce ? "lyric-sweep" : "text-foreground",
-        !isActive && "hover:opacity-100",
+        LINE_COLOR[state],
       )}
-      style={{
-        opacity: depth.opacity,
-        filter: depth.blur ? `blur(${depth.blur}px)` : undefined,
-      }}
       onClick={() => onSeek(index)}
     >
-      {/* The one piece of brand colour on the screen, and the only thing marking which line
-          is playing when the sweep is at either end. */}
-      
-      {/* Posistion the highlight indicator on the right for Arabic (RTL), and on the left for (LTR) Languages */}
-      <span
-        aria-hidden="true"
-        className={cn(
-          "absolute top-[0.28em] h-[0.72em] w-[3px] rounded-full bg-primary transition-opacity duration-300",
-          isArabic ? "-right-5" : "-left-5",
-          isActive ? "opacity-100" : "opacity-0 group-hover:opacity-40",
-        )}
-      />
       {text}
       {/* Sized in `em` so it tracks the line it belongs to, and deliberately quieter: it is
           a gloss on the lyric, not a second lyric competing with it. */}
@@ -796,26 +688,26 @@ function LyricsSourcePanel({
       open={isOpen}
       onOpenChange={setIsOpen}
       side="top"
-      className="w-[21rem]"
+      className="w-[21rem] border border-border bg-card p-1.5 shadow-none ring-0"
       triggerClassName="min-w-0"
       trigger={
         <button
           type="button"
-          className="flex min-w-0 items-center gap-1.5 rounded-full px-1.5 py-0.5 transition-colors hover:bg-card hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex min-w-0 items-center gap-1.5 rounded px-1.5 py-0.5 transition-colors hover:bg-card hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={() => setIsOpen((open) => !open)}
           aria-expanded={isOpen}
           aria-haspopup="dialog"
           aria-label="Show which lyric sources were tried"
         >
           <span
-            className={cn("size-1.5 shrink-0 rounded-full", STATUS_DOT[winner?.status ?? "miss"])}
+            className={cn("size-1.5 shrink-0", STATUS_DOT[winner?.status ?? "miss"])}
             aria-hidden="true"
           />
           <span className="truncate">{winner ? `via ${winner.label}` : "No source matched"}</span>
         </button>
       }
     >
-      <p className="px-2 pb-1.5 pt-1 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+      <p className="px-2 pb-1.5 pt-1 text-xs font-medium text-muted-foreground">
         Sources, best first
       </p>
       <div className="flex flex-col">
@@ -824,13 +716,13 @@ function LyricsSourcePanel({
           return (
             <div
               key={attempt.id}
-              className={cn("flex items-start gap-2 rounded-lg px-2 py-1.5", isWinner && "bg-muted/40")}
+              className={cn("flex items-start gap-2 rounded px-2 py-1.5", isWinner && "bg-muted")}
               // The ranking rationale, one hover away — it explains the order without
               // spending five permanent lines of the panel on it.
               title={LYRICS_SOURCES.find((source) => source.id === attempt.id)?.note}
             >
               <span
-                className={cn("mt-[0.4rem] size-1.5 shrink-0 rounded-full", STATUS_DOT[attempt.status])}
+                className={cn("mt-[0.4rem] size-1.5 shrink-0", STATUS_DOT[attempt.status])}
                 aria-hidden="true"
               />
               <span className="flex min-w-0 flex-1 flex-col">
@@ -838,7 +730,7 @@ function LyricsSourcePanel({
                   <span
                     className={cn(
                       "truncate text-sm",
-                      isWinner ? "font-semibold text-foreground" : "text-foreground/80",
+                      isWinner ? "font-semibold text-foreground" : "text-foreground",
                     )}
                   >
                     {attempt.label}
@@ -877,7 +769,7 @@ function LyricsOffsetControl({ trackId, offset }: { trackId: string; offset: num
 
   return (
     <div
-      className="flex shrink-0 items-center gap-0.5 rounded-full bg-card/70 p-0.5"
+      className="flex shrink-0 items-center gap-0.5 rounded bg-card p-0.5"
       role="group"
       aria-label="Lyric timing"
     >
@@ -888,7 +780,7 @@ function LyricsOffsetControl({ trackId, offset }: { trackId: string; offset: num
       />
       <button
         type="button"
-        className="min-w-[4.25rem] rounded-full px-1 py-0.5 text-center tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:hover:text-muted-foreground"
+        className="min-w-[4.25rem] rounded px-1 py-0.5 text-center tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:hover:text-muted-foreground"
         onClick={() => setLyricsOffset(trackId, 0)}
         disabled={offset === 0}
         aria-label={offset === 0 ? "Lyrics are in sync" : "Reset lyric timing"}
@@ -917,7 +809,7 @@ function OffsetButton({
   return (
     <button
       type="button"
-      className="flex size-6 items-center justify-center rounded-full text-sm leading-none transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="flex size-6 items-center justify-center rounded text-sm leading-none transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       onClick={onClick}
       aria-label={ariaLabel}
     >
@@ -935,7 +827,7 @@ function LyricsSkeleton() {
       {widths.map((width, index) => (
         <div
           key={width}
-          className="h-8 animate-pulse rounded-lg bg-foreground/10"
+          className="h-8 animate-pulse rounded bg-card"
           style={{ width: `${width}%`, animationDelay: `${index * 90}ms` }}
         />
       ))}
@@ -946,12 +838,12 @@ function LyricsSkeleton() {
 function LyricsMessage({ text, onRetry }: { text: string; onRetry?: () => void }) {
   return (
     <div className="flex flex-col items-center gap-4 px-2 py-24 text-center" role="status">
-      <LyricsIcon size={28} className="text-muted-foreground/50" aria-hidden="true" />
+      <LyricsIcon size={28} className="text-muted-foreground" aria-hidden="true" />
       <p className="text-sm text-muted-foreground">{text}</p>
       {onRetry && (
         <button
           type="button"
-          className="flex items-center gap-2 rounded-full bg-card px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex h-9 items-center gap-2 rounded bg-muted px-4 text-sm font-medium text-foreground transition-colors hover:bg-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={onRetry}
         >
           <RefreshIcon size={15} aria-hidden="true" />

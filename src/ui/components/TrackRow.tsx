@@ -6,11 +6,22 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { cn } from "@/lib/utils";
+import { cn, formatMinutesSeconds } from "@/lib/utils";
 import { propsEqualIgnoringHandlers } from "../../internal/propsEqual";
 import { Tooltip } from "@/components/motion/tooltip";
-import { CheckActiveIcon, CheckIcon, DislikeActiveIcon, DislikeIcon, DownloadIcon, HeartActiveIcon, HeartIcon, ListIcon, PlaylistAddIcon, PlayActiveIcon } from "@/ui/icons";
-import { Loader, MusicVisualizer } from "@/components/motion/loader";
+import {
+  CheckIcon,
+  DislikeActiveIcon,
+  DislikeIcon,
+  DownloadActiveIcon,
+  DownloadIcon,
+  DownloadProgressIcon,
+  HeartActiveIcon,
+  HeartIcon,
+  ListIcon,
+  PlayIcon,
+  PlaylistAddIcon,
+} from "@/ui/icons";
 import {
   getOfflineStatus,
   queueDownload,
@@ -39,7 +50,7 @@ interface TrackRowProps extends PassthroughButtonProps {
   index: number;
   /** This is the track the player is on, whether or not it is currently advancing. */
   isCurrent: boolean;
-  /** Current *and* actually playing — drives the level meter over the static glyph. */
+  /** Current *and* actually playing — announced to screen readers. */
   isPlaying: boolean;
   onSelect: (event: MouseEvent<HTMLElement>) => void;
   onContextMenu?: (event: MouseEvent<HTMLElement>) => void;
@@ -66,6 +77,10 @@ interface TrackRowProps extends PassthroughButtonProps {
    * two versions of the same song apart.
    */
   showAlbum?: boolean;
+  /** Shows the track's length in its own right-aligned column. */
+  showDuration?: boolean;
+  /** Appended to the artist line, e.g. a play count. A string so the row memo still holds. */
+  detail?: string;
   /** Hides the artist whose page we are already on. */
   suppressArtistId?: string;
   /** Right-aligned extras — play counts, durations, remove buttons. */
@@ -75,11 +90,57 @@ interface TrackRowProps extends PassthroughButtonProps {
   children?: ReactNode;
 }
 
+/*
+ * Column widths, shared by the row and `TrackListHeader` so the two cannot drift apart.
+ * The album column only appears from `lg`: at narrower widths it would win space from the
+ * title, which is the one thing every row needs to stay readable.
+ */
+const INDEX_COLUMN = "w-8 shrink-0 text-right";
+const ALBUM_COLUMN = "hidden min-w-0 shrink-0 truncate lg:block lg:w-48 xl:w-[280px]";
+const DOWNLOAD_COLUMN = "grid w-8 shrink-0 place-items-center";
+const DURATION_COLUMN = "w-14 shrink-0 text-right tabular-nums";
+
+/** Transparent at rest, one grey step up on hover — the row itself is already on `bg-card`. */
+const ROW_ACTION =
+  "grid size-8 shrink-0 place-items-center rounded text-foreground transition-colors hover:bg-muted " +
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
 /**
- * Download-for-offline toggle.
+ * Column headings for a list of `TrackRow`s. Pass the same column flags the rows get.
+ */
+export function TrackListHeader({
+  showAlbum = false,
+  showDownload = false,
+  showDuration = false,
+  className,
+}: {
+  showAlbum?: boolean;
+  showDownload?: boolean;
+  showDuration?: boolean;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-4 border-b border-card px-2 pb-2 text-xs text-muted-foreground",
+        className,
+      )}
+      aria-hidden="true"
+    >
+      <span className={INDEX_COLUMN}>#</span>
+      <span className="min-w-0 flex-1">Title</span>
+      {showAlbum && <span className={ALBUM_COLUMN}>Album</span>}
+      {showDownload && <span className={DOWNLOAD_COLUMN} />}
+      {showDuration && <span className={DURATION_COLUMN}>Time</span>}
+    </div>
+  );
+}
+
+/**
+ * Download-for-offline toggle, and the row's download state.
  *
- * Unlike the other hover actions this one stays visible once a track is downloaded — that is
- * state you need to see without hovering, the same reasoning as the queue's stop marker.
+ * Always visible rather than a hover action: whether a song is on this computer is state you
+ * need to see without hovering, the same reasoning as the queue's stop marker.
  */
 function DownloadAction({ track }: { track: Track }) {
   // Subscribing here rather than in TrackRow keeps download churn from re-rendering the
@@ -92,7 +153,9 @@ function DownloadAction({ track }: { track: Track }) {
 
   const label = status === "ready"
     ? `Remove ${track.title} from downloads`
-    : `Download ${track.title}`;
+    : isDownloading
+      ? `Downloading ${track.title}`
+      : `Download ${track.title}`;
 
   return (
     <Tooltip content={status === "ready" ? "Downloaded — click to remove" : "Download"}>
@@ -101,18 +164,7 @@ function DownloadAction({ track }: { track: Track }) {
         tabIndex={0}
         aria-label={label}
         aria-pressed={status === "ready"}
-        className={cn(
-          "grid shrink-0 place-items-center rounded-full transition",
-          // The percent readout needs more room than a glyph, so the slot widens only while
-          // it is showing rather than reserving the space on every row forever.
-          isDownloading ? "h-8 w-12" : "size-8",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          status === "ready"
-            ? "text-primary opacity-100"
-            : "text-muted-foreground opacity-0 hover:bg-background hover:text-foreground group-hover/row:opacity-100 focus:opacity-100",
-          (status === "queued" || status === "downloading") && "opacity-100",
-          status === "failed" && "text-destructive opacity-100",
-        )}
+        className={cn(ROW_ACTION, status === "failed" && "text-destructive")}
         onClick={(event) => {
           event.stopPropagation();
           if (status === "ready") void removeDownload(track.id);
@@ -126,22 +178,18 @@ function DownloadAction({ track }: { track: Track }) {
           else queueDownload(track);
         }}
       >
-        {isDownloading ? (
-          /* Fed by the real byte count streamed from Rust. When the response has no
-             Content-Length the store reports null and this falls back to the sweeping
-             animation, which is honest about not knowing. */
-          <Loader
-            variant="percent"
+        {isDownloading || status === "queued" ? (
+          /* The square fills from the bottom, fed by the real byte count streamed from Rust.
+             Queued, or a response with no Content-Length, stays an empty square. */
+          <DownloadProgressIcon
             size={18}
-            value={offline.progress ?? undefined}
-            label={`Downloading ${track.title}`}
+            progress={isDownloading ? (offline.progress ?? 0) / 100 : 0}
+            aria-hidden="true"
           />
-        ) : status === "queued" ? (
-          <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
         ) : status === "ready" ? (
-          <CheckActiveIcon size={16} aria-hidden="true" />
+          <DownloadActiveIcon size={18} aria-hidden="true" />
         ) : (
-          <DownloadIcon size={16} aria-hidden="true" />
+          <DownloadIcon size={18} aria-hidden="true" />
         )}
       </span>
     </Tooltip>
@@ -172,12 +220,7 @@ function QuickAction({
         role="button"
         tabIndex={0}
         aria-label={label}
-        className={cn(
-          "grid size-8 shrink-0 place-items-center rounded-full text-muted-foreground",
-          "opacity-0 transition hover:bg-background hover:text-foreground",
-          "group-hover/row:opacity-100 focus:opacity-100",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        )}
+        className={cn(ROW_ACTION, "opacity-0 group-hover/row:opacity-100 focus:opacity-100")}
         onClick={(event) => {
           event.stopPropagation();
           onActivate();
@@ -227,12 +270,9 @@ function RatingActions({ track }: { track: Track }) {
           aria-pressed={isActive}
           aria-busy={isPending}
           className={cn(
-            "grid size-8 shrink-0 place-items-center rounded-full transition",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            ROW_ACTION,
             isPending && "pointer-events-none opacity-50",
-            isActive
-              ? "text-primary opacity-100"
-              : "text-muted-foreground opacity-0 hover:bg-background hover:text-foreground group-hover/row:opacity-100 focus:opacity-100",
+            !isActive && "opacity-0 group-hover/row:opacity-100 focus:opacity-100",
           )}
           onClick={(event) => {
             event.stopPropagation();
@@ -302,7 +342,7 @@ function ExplicitBadge() {
       title="Explicit"
       aria-label="Explicit"
       role="img"
-      className="grid size-[15px] shrink-0 place-items-center rounded-[3px] bg-muted-foreground/85 text-[10px] font-bold leading-none text-background"
+      className="grid size-[15px] shrink-0 place-items-center rounded-[3px] bg-muted-foreground text-[10px] font-bold leading-none text-background"
     >
       <span aria-hidden="true">E</span>
     </span>
@@ -326,11 +366,9 @@ function SelectionCheckbox({
       tabIndex={0}
       aria-label={`Select ${title}`}
       className={cn(
-        "grid size-6 shrink-0 place-items-center rounded-md border transition-colors",
+        "grid size-[18px] shrink-0 place-items-center rounded-[3px] border-[1.5px] border-foreground transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        isSelected
-          ? "border-primary bg-primary text-primary-foreground"
-          : "border-border text-transparent hover:border-muted-foreground",
+        isSelected ? "bg-foreground text-background" : "text-transparent",
       )}
       onClick={(event) => {
         // Without this the row's own click handler also fires and starts playback.
@@ -365,6 +403,8 @@ export const TrackRow = memo(function TrackRow({
   onToggleSelected,
   showArtwork = true,
   showAlbum = false,
+  showDuration = false,
+  detail,
   suppressArtistId,
   trailing,
   className,
@@ -424,7 +464,7 @@ export const TrackRow = memo(function TrackRow({
       onContextMenu={onContextMenu ? handleContextMenu : undefined}
       aria-current={isCurrent ? "true" : undefined}
       className={cn(
-        "group/row relative flex w-full items-center gap-3  px-2 py-1.5 text-left",
+        "group/row relative flex w-full items-center gap-4 rounded px-2 py-1.5 text-left",
         "transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2",
         "focus-visible:ring-inset focus-visible:ring-ring",
         /*
@@ -441,8 +481,7 @@ export const TrackRow = memo(function TrackRow({
          * `w-full` states it outright rather than deriving it from content.
          */
         "[content-visibility:auto] [contain-intrinsic-size:auto_52px]",
-        isCurrent && "bg-primary/5",
-        isSelected && "bg-primary/10",
+        isSelected && "bg-muted hover:bg-muted",
         className,
       )}
     >
@@ -451,106 +490,111 @@ export const TrackRow = memo(function TrackRow({
       {/* While a selection is open the index column becomes a checkbox. It replaces the
           number rather than sitting beside it so the row width never changes — a list that
           reflows the moment you select something is unusable for range-selecting. */}
-      {isSelectionActive && canSelect ? (
-        <SelectionCheckbox
-          title={track.title}
-          isSelected={isSelected}
-          onToggle={handleToggleSelected}
-        />
-      ) : (
-      /* The position number is only useful until you have decided to act on the row, so it
-          gives way to a play glyph on hover — and to a level meter once this row is the one
-          playing. All three share the slot, so the row never reflows between states. */
-      <span className="relative w-6 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-        <span
-          className={cn(
-            "transition-opacity",
-            isCurrent ? "opacity-0" : "group-hover/row:opacity-0",
-          )}
-        >
-          {index + 1}
-        </span>
-
-        {/*
-          On a list that supports multi-select, hover offers the checkbox instead of the play
-          glyph. Selection was previously unreachable without already having a selection: the
-          box only appeared once `isSelectionActive`, and the only way in was a ctrl-click
-          nothing advertised. The row itself still plays on click, so nothing is lost.
-        */}
-        {!isCurrent && canSelect && (
-          <span className="absolute inset-0 grid place-items-center opacity-0 transition-opacity group-hover/row:opacity-100 focus-within:opacity-100">
+      <span className={cn(INDEX_COLUMN, "relative text-[13px] tabular-nums text-muted-foreground")}>
+        {isSelectionActive && canSelect ? (
+          <span className="flex justify-end">
             <SelectionCheckbox
               title={track.title}
               isSelected={isSelected}
               onToggle={handleToggleSelected}
             />
           </span>
-        )}
+        ) : (
+          <>
+            {/* The position number is only useful until you have decided to act on the row,
+                so it gives way to a checkbox or a play glyph on hover. Both share the slot,
+                so the row never reflows between states. */}
+            <span className="transition-opacity group-hover/row:opacity-0">{index + 1}</span>
 
-        {!isCurrent && !canSelect && (
-          <PlayActiveIcon
-            size={14}
-            className="absolute inset-0 m-auto opacity-0 transition-opacity group-hover/row:opacity-100"
-            aria-hidden="true"
-          />
-        )}
-
-        {isCurrent && (
-          <span className="absolute inset-0 flex items-center justify-end" aria-hidden="true">
-            {isPlaying ? (
-              <MusicVisualizer
-                bars={4}
-                className="[--music-gap:2px] [--music-height:13px] [--music-width:17px]"
-              />
+            {/*
+              On a list that supports multi-select, hover offers the checkbox instead of the
+              play glyph. Selection was previously unreachable without already having a
+              selection: the box only appeared once `isSelectionActive`, and the only way in
+              was a ctrl-click nothing advertised. The row itself still plays on click.
+            */}
+            {canSelect ? (
+              <span className="absolute inset-0 flex items-center justify-end opacity-0 transition-opacity group-hover/row:opacity-100 focus-within:opacity-100">
+                <SelectionCheckbox
+                  title={track.title}
+                  isSelected={isSelected}
+                  onToggle={handleToggleSelected}
+                />
+              </span>
             ) : (
-              <PlayActiveIcon size={14} className="text-primary" />
+              <span className="absolute inset-0 flex items-center justify-end text-foreground opacity-0 transition-opacity group-hover/row:opacity-100">
+                <PlayIcon size={16} aria-hidden="true" />
+              </span>
+            )}
+          </>
+        )}
+      </span>
+
+      <span className="flex min-w-0 flex-1 items-center gap-3">
+        {showArtwork ? (
+          <TrackArtwork
+            className="size-10 shrink-0 rounded"
+            size={40}
+            artworkUrl={track.artworkUrl}
+            iconSize={18}
+          />
+        ) : null}
+
+        <span className="flex min-w-0 flex-1 flex-col">
+          {/*
+            The badge sits beside the title rather than inside it: as a sibling it keeps its
+            own width while `truncate` eats the title, so a long name shortens instead of
+            pushing the stamp out of the row.
+          */}
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span
+              className={cn(
+                "truncate text-sm font-semibold",
+                isCurrent ? "text-accent-text" : "text-foreground",
+              )}
+            >
+              {track.title}
+            </span>
+            {track.isExplicit && <ExplicitBadge />}
+          </span>
+          <span className="truncate text-[13px] text-muted-foreground">
+            <ArtistLinks
+              artists={track.artists}
+              fallback={track.artist}
+              suppressArtistId={suppressArtistId}
+            />
+            {detail ? ` · ${detail}` : null}
+          </span>
+        </span>
+
+        {/* Hover actions, at the end of the title cell so the columns after it stay put. The
+            row itself is a <button>, so these cannot be buttons — see QuickAction. */}
+        {showRating && <RatingActions track={track} />}
+        {(onQuickAddToQueue || onQuickAdd) && (
+          <span className="flex shrink-0 items-center">
+            {onQuickAddToQueue && (
+              <QuickAction
+                label={`Add ${track.title} to the queue`}
+                tooltip="Add to queue"
+                onActivate={handleQuickAddToQueue}
+              >
+                <ListIcon size={18} aria-hidden="true" />
+              </QuickAction>
+            )}
+            {onQuickAdd && (
+              <QuickAction
+                label={`Add ${track.title} to a playlist`}
+                tooltip="Add to playlist"
+                onActivate={handleQuickAdd}
+              >
+                <PlaylistAddIcon size={18} aria-hidden="true" />
+              </QuickAction>
             )}
           </span>
         )}
       </span>
-      )}
 
-      {showArtwork ? (
-        <TrackArtwork
-          className="size-10 shrink-0 "
-          size={40}
-          artworkUrl={track.artworkUrl}
-          iconSize={18}
-        />
-      ) : null}
-
-      <span className="flex min-w-0 flex-1 flex-col">
-        {/*
-          The badge sits beside the title rather than inside it: as a sibling it keeps its
-          own width while `truncate` eats the title, so a long name shortens instead of
-          pushing the stamp out of the row.
-        */}
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span
-            className={cn(
-              "truncate text-sm font-medium",
-              isCurrent ? "text-primary" : "text-foreground",
-            )}
-          >
-            {track.title}
-          </span>
-          {track.isExplicit && <ExplicitBadge />}
-        </span>
-        <ArtistLinks
-          className="truncate text-xs text-muted-foreground"
-          artists={track.artists}
-          fallback={track.artist}
-          suppressArtistId={suppressArtistId}
-        />
-      </span>
-
-      {/*
-        Album column. Hidden below `lg` rather than allowed to shrink: at narrow widths it
-        would win space from the title, which is the one thing every row needs to stay
-        readable. `basis-0` keeps it from claiming more than its share of a wide row.
-      */}
       {showAlbum && (
-        <span className="hidden min-w-0 flex-1 basis-0 truncate text-xs text-muted-foreground lg:block">
+        <span className={cn(ALBUM_COLUMN, "text-[13px] text-muted-foreground")}>
           {track.album
             ? (openAlbumForTrack && track.source !== "local" ? (
               /*
@@ -583,37 +627,23 @@ export const TrackRow = memo(function TrackRow({
         </span>
       )}
 
-      {/* Hover actions. The row itself is a <button>, so these cannot be buttons — see
-          QuickAction. They sit before `trailing` so durations stay hard against the edge. */}
-      {showRating && <RatingActions track={track} />}
-      {showDownload && <DownloadAction track={track} />}
+      {/* The slot is kept for local files, which have nothing to download, so the columns
+          still line up with the header. */}
+      {showDownload && (
+        <span className={DOWNLOAD_COLUMN}>
+          <DownloadAction track={track} />
+        </span>
+      )}
 
-      {(onQuickAddToQueue || onQuickAdd) && (
-        <span className="flex shrink-0 items-center">
-          {onQuickAddToQueue && (
-            <QuickAction
-              label={`Add ${track.title} to the queue`}
-              tooltip="Add to queue"
-              onActivate={handleQuickAddToQueue}
-            >
-              <ListIcon size={17} aria-hidden="true" />
-            </QuickAction>
-          )}
-          {onQuickAdd && (
-            <QuickAction
-              label={`Add ${track.title} to a playlist`}
-              tooltip="Add to playlist"
-              onActivate={handleQuickAdd}
-            >
-              <PlaylistAddIcon size={17} aria-hidden="true" />
-            </QuickAction>
-          )}
+      {showDuration && (
+        <span className={cn(DURATION_COLUMN, "text-[13px] text-muted-foreground")}>
+          {track.durationSec ? formatMinutesSeconds(track.durationSec) : ""}
         </span>
       )}
 
       {trailing}
 
-      {/* Announced to screen readers only; the meter above is decorative. */}
+      {/* The playing row is marked by its title colour alone, so say it for screen readers. */}
       {isCurrent ? (
         <span className="sr-only">{isPlaying ? "Now playing" : "Paused"}</span>
       ) : null}

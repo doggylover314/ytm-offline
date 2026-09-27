@@ -144,16 +144,16 @@ export function MusicTabs({
             <div
               key={tab.id}
               className={cn(
-                "group relative flex h-8 min-w-0 max-w-52 shrink-0 cursor-default items-center gap-1.5 rounded-md px-3 text-sm transition-colors select-none cursor-pointer",
+                "group relative flex h-8 min-w-0 max-w-52 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded px-3 text-[13px] font-medium transition-colors",
                 isActive
-                  ? "text-foreground rounded-md"
-                  : "text-muted-foreground hover:bg-card/60 hover:text-foreground rounded-md",
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:bg-card hover:text-foreground",
                 draggedTabId === tab.id && "opacity-40",
                 // Drop indicator: a hairline on the side the tab will land.
                 isDropBefore &&
-                  "before:absolute before:-left-0.5 before:top-1 before:bottom-1 before:w-0.5 before:rounded-md before:bg-primary",
+                  "before:absolute before:-left-0.5 before:top-1 before:bottom-1 before:w-0.5 before:rounded-[1px] before:bg-foreground",
                 isDropAfter &&
-                  "after:absolute after:-right-0.5 after:top-1 after:bottom-1 after:w-0.5 after:rounded-md after:bg-primary",
+                  "after:absolute after:-right-0.5 after:top-1 after:bottom-1 after:w-0.5 after:rounded-[1px] after:bg-foreground",
               )}
               data-music-tab-id={tab.id}
               data-onboarding={tab.id === onboardingFirstTabId ? "first-tab" : undefined}
@@ -190,12 +190,12 @@ export function MusicTabs({
                 }
               }}
             >
-              {/* Shared-layout pill glides between tabs instead of each tab fading. */}
+              {/* Shared-layout highlight glides between tabs instead of each tab fading. */}
               {isActive && (
                 <motion.span
                   layoutId="music-tab-active"
                   transition={{ type: "spring", stiffness: 520, damping: 42 }}
-                  className="absolute inset-0 -z-10 rounded-md bg-card"
+                  className="absolute inset-0 -z-10 rounded bg-card"
                 />
               )}
 
@@ -207,7 +207,7 @@ export function MusicTabs({
                       initial={{ opacity: 0, scale: 0.6, width: 0 }}
                       animate={{ opacity: 1, scale: 1, width: "auto" }}
                       exit={{ opacity: 0, scale: 0.6, width: 0 }}
-                      className="flex shrink-0 items-center text-primary"
+                      className="flex shrink-0 items-center text-foreground"
                     >
                       <VolumeLoudActiveIcon size={15} aria-label="Currently playing" />
                     </motion.span>
@@ -221,7 +221,7 @@ export function MusicTabs({
               {canCloseTab && (
                 <button
                   type="button"
-                  className="-mr-1 shrink-0 rounded-full p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+                  className="-mr-1 shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
                   onClick={(e) => {
                     e.stopPropagation();
                     onCloseTab(tab.id);
@@ -236,9 +236,9 @@ export function MusicTabs({
         })}
 
         <Button
-      variant='ghost'
-          size='icon'
-          className="flex size-7 shrink-0 items-center justify-center rounded-none  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          variant="ghost"
+          size="icon"
+          className="flex size-7 shrink-0 items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={onCreateTab}
           aria-label="Add new tab"
           data-onboarding="new-tab"

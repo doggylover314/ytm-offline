@@ -7,20 +7,20 @@ import type { LibraryController } from "../../player/LibraryController";
 import { logInternalWarn } from "../../internal/logging";
 
 /**
- * Small uppercase header a switcher renders directly above its own rows — never on its own, so
+ * Small header a switcher renders directly above its own rows — never on its own, so
  * a section that has hidden itself (single option, `showSingle` off) can never leave an
  * orphaned label with nothing underneath it. This is what tells "Account" and "Channel" apart
  * in the title bar popover instead of both rendering as one undifferentiated list.
  */
 function SectionLabel({ children }: { children: string }) {
   return (
-    <span className="px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+    <span className="px-2 text-[13px] font-medium text-muted-foreground">
       {children}
     </span>
   );
 }
 
-/** Round profile image with a glyph fallback, shared by every account surface. */
+/** Square profile image with a glyph fallback, shared by every account surface. */
 export function AccountAvatar({
   artworkUrl,
   className,
@@ -41,7 +41,7 @@ export function AccountAvatar({
       <img
         src={artworkUrl}
         alt=""
-        className={cn("shrink-0 rounded-full object-cover", className)}
+        className={cn("shrink-0 rounded object-cover", className)}
         onError={() => setFailed(true)}
         referrerPolicy="no-referrer"
       />
@@ -51,7 +51,7 @@ export function AccountAvatar({
   return (
     <span
       className={cn(
-        "grid shrink-0 place-items-center rounded-full bg-card text-muted-foreground",
+        "grid shrink-0 place-items-center rounded bg-muted text-foreground",
         className,
       )}
     >
@@ -122,7 +122,7 @@ export function AccountSwitcher({
 
   if (accounts === null) {
     return (
-      <div className={cn("flex items-center gap-2 px-1  text-sm text-muted-foreground", className)}>
+      <div className={cn("flex items-center gap-2 px-1 text-sm text-muted-foreground", className)}>
         <Loader variant="spinner" size={16} />
         Loading channels...
       </div>
@@ -151,10 +151,10 @@ export function AccountSwitcher({
             onClick={() => void handleSelect(account)}
             aria-current={account.isActive ? "true" : undefined}
             className={cn(
-              "flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted/70",
-              " disabled:pointer-events-none disabled:opacity-60",
+              "flex h-11 w-full items-center gap-2.5 rounded px-2 text-left transition-colors hover:bg-muted",
+              "disabled:pointer-events-none disabled:opacity-60",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              account.isActive && "bg-muted/40",
+              account.isActive && "bg-muted",
             )}
           >
             <AccountAvatar artworkUrl={account.artworkUrl} className="size-8" iconSize={16} />
@@ -162,7 +162,7 @@ export function AccountSwitcher({
             {switchingId === account.id ? (
               <Loader variant="spinner" size={15} />
             ) : account.isActive ? (
-              <CheckActiveIcon size={16} className="shrink-0 text-primary" aria-hidden="true" />
+              <CheckActiveIcon size={16} className="shrink-0 text-foreground" aria-hidden="true" />
             ) : null}
           </button>
         ))}
@@ -287,10 +287,10 @@ export function GoogleAccountSwitcher({
             onClick={() => void handleSelect(account)}
             aria-current={account.isActive ? "true" : undefined}
             className={cn(
-              "group flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted/70",
+              "group flex h-11 w-full items-center gap-2.5 rounded px-2 text-left transition-colors hover:bg-muted",
               "disabled:pointer-events-none disabled:opacity-60",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              account.isActive && "bg-muted/40",
+              account.isActive && "bg-muted",
             )}
           >
             <AccountAvatar artworkUrl={account.artworkUrl} className="size-8" iconSize={16} />
@@ -300,7 +300,7 @@ export function GoogleAccountSwitcher({
             ) : (
               <>
                 {account.isActive && (
-                  <CheckActiveIcon size={16} className="shrink-0 text-primary" aria-hidden="true" />
+                  <CheckActiveIcon size={16} className="shrink-0 text-foreground" aria-hidden="true" />
                 )}
                 {allowRemove && (
                   <span
@@ -313,7 +313,7 @@ export function GoogleAccountSwitcher({
                       void handleRemove(account, event as unknown as React.MouseEvent);
                     }}
                     aria-label={`Remove ${account.name}`}
-                    className="flex shrink-0 items-center justify-center rounded-md p-1 opacity-0 transition-opacity hover:bg-background hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="flex shrink-0 items-center justify-center rounded p-1 opacity-0 transition-opacity hover:bg-background hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <CloseIcon size={14} aria-hidden="true" />
                   </span>
@@ -344,13 +344,13 @@ export function AddGoogleAccountButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
+        "flex h-11 w-full items-center gap-2.5 rounded px-2 text-left text-sm text-foreground transition-colors hover:bg-muted",
         "disabled:pointer-events-none disabled:opacity-60",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         className,
       )}
     >
-      <span className="grid size-8 shrink-0 place-items-center rounded-full bg-card text-muted-foreground">
+      <span className="grid size-8 shrink-0 place-items-center rounded bg-muted text-foreground">
         <UserPlusIcon size={16} aria-hidden="true" />
       </span>
       Add account

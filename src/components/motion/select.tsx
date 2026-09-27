@@ -1,13 +1,6 @@
 "use client";
-// beui.dev/components/motion/select
 
 import { CheckIcon, ChevronDownIcon } from "@/ui/icons";
-import {
-  motion,
-  type Transition,
-  useReducedMotion,
-  type Variants,
-} from "motion/react";
 import {
   createContext,
   type ReactNode,
@@ -20,23 +13,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { EASE_OUT } from "@/lib/ease";
 import { cn } from "@/lib/utils";
-
-const INSTANT_TRANSITION: Transition = { duration: 0 };
-
-// Spring with bounce powers the unfold/separation; per-property timings in the
-// content choreograph it (see SelectContent). Mirrors bouncy-accordion's feel.
-const CHEVRON_TRANSITION: Transition = { type: "spring", duration: 0.4, bounce: 0.3 };
-
-const LIST_VARIANTS: Variants = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.035, delayChildren: 0.05 } },
-};
-const ITEM_VARIANTS: Variants = {
-  hidden: { opacity: 0, y: -6, filter: "blur(3px)" },
-  show: { opacity: 1, y: 0, filter: "blur(0px)" },
-};
 
 type Placement = "bottom" | "top";
 
@@ -46,7 +23,7 @@ type Placement = "bottom" | "top";
  * Half a row on purpose — a list cut mid-item reads as "there is more below" without needing a
  * scrollbar to say so.
  */
-const MAX_LIST_HEIGHT = 224;
+const MAX_LIST_HEIGHT = 240;
 
 interface SelectContextValue {
   value: string | undefined;
@@ -56,7 +33,6 @@ interface SelectContextValue {
   register: (value: string, label: string) => void;
   unregister: (value: string) => void;
   labelFor: (value: string | undefined) => string | undefined;
-  reduce: boolean;
   triggerId: string;
   listId: string;
   disabled: boolean;
@@ -89,7 +65,6 @@ export function Select({
   className,
   children,
 }: SelectProps) {
-  const reduce = useReducedMotion() ?? false;
   const baseId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -146,25 +121,13 @@ export function Select({
       register,
       unregister,
       labelFor: (v) => (v === undefined ? undefined : labels.get(v)),
-      reduce,
       triggerId: `${baseId}-trigger`,
       listId: `${baseId}-list`,
       disabled,
       placement,
       setPlacement,
     }),
-    [
-      current,
-      open,
-      select,
-      register,
-      unregister,
-      labels,
-      reduce,
-      baseId,
-      disabled,
-      placement,
-    ],
+    [current, open, select, register, unregister, labels, baseId, disabled, placement],
   );
 
   return (
@@ -179,60 +142,38 @@ export function Select({
 export interface SelectTriggerProps {
   className?: string;
   children: ReactNode;
+  "aria-label"?: string;
+  "aria-labelledby"?: string;
 }
 
-export function SelectTrigger({ className, children }: SelectTriggerProps) {
+export function SelectTrigger({
+  className,
+  children,
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledBy,
+}: SelectTriggerProps) {
   const ctx = useSelectContext("SelectTrigger");
-  const isTop = ctx.placement === "top";
-  // edge facing the panel flattens then rounds; the far edge stays rounded.
-  // All four corners are specified so none gets stranded when placement flips.
-  const kf = ctx.open ? [0, 0, 12] : [12, 0, 12];
-  const kfT: Transition = ctx.reduce
-    ? { duration: 0 }
-    : ctx.open
-      ? { duration: 0.6, times: [0, 0.4, 1], ease: EASE_OUT }
-      : { duration: 0.42, times: [0, 0.5, 1], ease: EASE_OUT };
   return (
-    <motion.button
+    <button
       type="button"
       id={ctx.triggerId}
       disabled={ctx.disabled}
       aria-haspopup="listbox"
       aria-expanded={ctx.open}
       aria-controls={ctx.listId}
+      aria-label={ariaLabel}
+      aria-labelledby={ariaLabelledBy}
       onClick={() => ctx.setOpen(!ctx.open)}
-      // Gooey: the edge facing the panel snaps flat (panel attached) then rounds
-      // back once the panel pulls away — the two pinch apart.
-      initial={false}
-      animate={{
-        borderTopLeftRadius: isTop ? kf : 12,
-        borderTopRightRadius: isTop ? kf : 12,
-        borderBottomLeftRadius: isTop ? 12 : kf,
-        borderBottomRightRadius: isTop ? 12 : kf,
-      }}
-      transition={{
-        borderTopLeftRadius: isTop ? kfT : INSTANT_TRANSITION,
-        borderTopRightRadius: isTop ? kfT : INSTANT_TRANSITION,
-        borderBottomLeftRadius: isTop ? INSTANT_TRANSITION : kfT,
-        borderBottomRightRadius: isTop ? INSTANT_TRANSITION : kfT,
-      }}
       className={cn(
-        "relative z-10 flex w-full items-center justify-between gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors",
-        "hover:border-(--color-border-strong) focus-visible:ring-2 focus-visible:ring-foreground/20",
+        "flex h-9 w-full items-center justify-between gap-2 rounded-[4px] bg-muted pl-3 pr-2 text-sm text-foreground outline-none transition-colors duration-150",
+        "hover:bg-border focus-visible:shadow-[inset_0_0_0_2px_var(--color-foreground)]",
         "disabled:pointer-events-none disabled:opacity-50",
         className,
       )}
     >
       {children}
-      <motion.span
-        aria-hidden
-        animate={{ rotate: ctx.open ? 180 : 0 }}
-        transition={ctx.reduce ? { duration: 0 } : CHEVRON_TRANSITION}
-        className="text-muted-foreground"
-      >
-        <ChevronDownIcon size={16} />
-      </motion.span>
-    </motion.button>
+      <ChevronDownIcon size={18} aria-hidden="true" className="shrink-0 text-muted-foreground" />
+    </button>
   );
 }
 
@@ -246,7 +187,11 @@ export function SelectValue({ placeholder, className }: SelectValueProps) {
   const label = ctx.labelFor(ctx.value);
   return (
     <span
-      className={cn(label ? "text-foreground" : "text-muted-foreground", className)}
+      className={cn(
+        "min-w-0 truncate",
+        label ? "text-foreground" : "text-muted-foreground",
+        className,
+      )}
     >
       {label ?? placeholder ?? "Select"}
     </span>
@@ -260,136 +205,49 @@ export interface SelectContentProps {
 
 export function SelectContent({ className, children }: SelectContentProps) {
   const ctx = useSelectContext("SelectContent");
-  const innerRef = useRef<HTMLDivElement>(null);
-  const [height, setHeight] = useState(0);
-  const open = ctx.open;
-  const { setPlacement } = ctx;
+  const listRef = useRef<HTMLDivElement>(null);
+  const { open, setPlacement, triggerId } = ctx;
 
-  /*
-   * The list scrolls past MAX_LIST_HEIGHT rather than growing, so `offsetHeight` — and with it
-   * the panel's animated height and the room the placement flip looks for — is already clamped.
-   * A twenty-language list used to unfold to some 700px and simply run off the window.
-   */
   useLayoutEffect(() => {
-    const node = innerRef.current;
-    if (!node) return;
-    const measure = () => setHeight(node.offsetHeight);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(node);
-    return () => observer.disconnect();
-  });
+    if (!open) return;
+    const trigger = document.getElementById(triggerId);
+    const node = listRef.current;
+    if (!trigger || !node) return;
 
-  // Opening onto the top of a capped list hides the current choice; this scrolls it into view.
-  // Measured against the list itself rather than via offsetTop, which answers relative to the
-  // positioned root and would count the trigger and the gap as part of the scroll offset.
-  useLayoutEffect(() => {
-    const node = innerRef.current;
-    if (!open || !node) return;
+    // Flip upward when there isn't room below and there's more above.
+    const rect = trigger.getBoundingClientRect();
+    const below = window.innerHeight - rect.bottom;
+    const above = rect.top;
+    setPlacement(below < node.offsetHeight + 16 && above > below ? "top" : "bottom");
+
+    // Opening onto the top of a capped list hides the current choice; this scrolls it into
+    // view. Measured against the list itself rather than via offsetTop, which answers relative
+    // to the positioned root and would count the trigger as part of the scroll offset.
     const selected = node.querySelector<HTMLElement>('[aria-selected="true"]');
     if (!selected) return;
     const offset = selected.getBoundingClientRect().top - node.getBoundingClientRect().top;
     node.scrollTop += offset - (node.clientHeight - selected.offsetHeight) / 2;
-  }, [open]);
+  }, [open, triggerId, setPlacement]);
 
-  // On open, flip upward when there isn't room below and there's more above.
-  useLayoutEffect(() => {
-    if (!open) return;
-    const trigger = document.getElementById(ctx.triggerId);
-    const node = innerRef.current;
-    if (!trigger || !node) return;
-    const rect = trigger.getBoundingClientRect();
-    const h = node.offsetHeight;
-    const below = window.innerHeight - rect.bottom;
-    const above = rect.top;
-    setPlacement(below < h + 16 && above > below ? "top" : "bottom");
-  }, [open, ctx.triggerId, setPlacement]);
-
-  // Specify EVERY corner + both margins each render. The near edge (facing the
-  // trigger) animates flat->round and the gap opens on that side; the far edge
-  // stays rounded and its margin pinned to 0. Setting all of them avoids a
-  // stranded square corner when the placement flips between opens.
-  const isTop = ctx.placement === "top";
-  const nearGap = open ? 8 : 0;
-  const nearRadius = open ? 12 : 0;
-
-  const gapT: Transition = open
-    ? { type: "spring", duration: 0.6, bounce: 0.5, delay: 0.12 }
-    : { type: "spring", duration: 0.3, bounce: 0.1 };
-  const radiusT: Transition = open
-    ? { duration: 0.3, ease: EASE_OUT, delay: 0.14 }
-    : { duration: 0.16, ease: EASE_OUT };
-
-  // Items stay mounted (open just animates the panel) so each item's label
-  // registration persists — otherwise the trigger would fall back to the
-  // placeholder the moment the panel closes.
+  // Items stay mounted while closed so each item's label registration persists — otherwise
+  // the trigger would fall back to the placeholder the moment the menu closes.
   return (
-    <motion.div
+    <div
+      ref={listRef}
       id={ctx.listId}
       role="listbox"
       aria-labelledby={ctx.triggerId}
-      aria-hidden={!open}
-      initial={false}
-      animate={
-        ctx.reduce
-          ? { opacity: open ? 1 : 0, height: open ? height : 0 }
-          : {
-              opacity: open ? 1 : 0,
-              height: open ? height : 0,
-              // gap opens on the side facing the trigger
-              marginTop: isTop ? 0 : nearGap,
-              marginBottom: isTop ? nearGap : 0,
-              // near corners go flat->round; far corners stay rounded
-              borderTopLeftRadius: isTop ? 12 : nearRadius,
-              borderTopRightRadius: isTop ? 12 : nearRadius,
-              borderBottomLeftRadius: isTop ? nearRadius : 12,
-              borderBottomRightRadius: isTop ? nearRadius : 12,
-            }
-      }
-      transition={
-        ctx.reduce
-          ? { duration: 0.12 }
-          : {
-              opacity: open
-                ? { duration: 0.18 }
-                : { duration: 0.16, delay: 0.12 },
-              height: open
-                ? { type: "spring", duration: 0.42, bounce: 0.14 }
-                : { duration: 0.26, ease: EASE_OUT, delay: 0.14 },
-              marginTop: isTop ? INSTANT_TRANSITION : gapT,
-              marginBottom: isTop ? gapT : INSTANT_TRANSITION,
-              borderTopLeftRadius: isTop ? INSTANT_TRANSITION : radiusT,
-              borderTopRightRadius: isTop ? INSTANT_TRANSITION : radiusT,
-              borderBottomLeftRadius: isTop ? radiusT : INSTANT_TRANSITION,
-              borderBottomRightRadius: isTop ? radiusT : INSTANT_TRANSITION,
-            }
-      }
-      style={{
-        transformOrigin: isTop ? "bottom" : "top",
-        overflow: "hidden",
-        pointerEvents: open ? "auto" : "none",
-      }}
-      // flush against the trigger, then separates into its own rounded pill;
-      // sits above or below depending on available space
+      hidden={!open}
+      // overscroll-contain: a list at its end must not hand the wheel to the page behind it.
+      style={{ maxHeight: MAX_LIST_HEIGHT }}
       className={cn(
-        "absolute left-0 right-0 z-20 rounded-xl border border-border bg-background shadow-lg",
-        isTop ? "bottom-full" : "top-full",
+        "absolute left-0 right-0 z-20 flex flex-col overflow-y-auto overscroll-contain rounded-[6px] bg-card p-1.5 shadow-[inset_0_0_0_1px_var(--color-border)]",
+        ctx.placement === "top" ? "bottom-full mb-1" : "top-full mt-1",
         className,
       )}
     >
-      <motion.div
-        ref={innerRef}
-        variants={ctx.reduce ? undefined : LIST_VARIANTS}
-        initial={false}
-        animate={open ? "show" : "hidden"}
-        // overscroll-contain: a list at its end must not hand the wheel to the settings page
-        // behind it. Only scrollable while open, or a closed panel would swallow the wheel.
-        className={cn("p-1 overscroll-contain", open ? "overflow-y-auto" : "overflow-hidden")}
-        style={{ maxHeight: MAX_LIST_HEIGHT }}
-      >
-        {children}
-      </motion.div>
-    </motion.div>
+      {children}
+    </div>
   );
 }
 
@@ -416,25 +274,21 @@ export function SelectItem({
   }, [ctx.register, ctx.unregister, value, label]);
 
   return (
-    <motion.li variants={ctx.reduce ? undefined : ITEM_VARIANTS}>
-      <button
-        type="button"
-        role="option"
-        aria-selected={selected}
-        disabled={disabled}
-        onClick={() => ctx.select(value)}
-        className={cn(
-          "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm outline-none transition-colors",
-          selected
-            ? "bg-muted text-foreground"
-            : "text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:bg-muted",
-          "disabled:pointer-events-none disabled:opacity-50",
-          className,
-        )}
-      >
-        {children}
-        {selected ? <CheckIcon size={14} className="shrink-0" /> : null}
-      </button>
-    </motion.li>
+    <button
+      type="button"
+      role="option"
+      aria-selected={selected}
+      disabled={disabled}
+      onClick={() => ctx.select(value)}
+      className={cn(
+        "flex h-9 w-full shrink-0 items-center justify-between gap-2 rounded-[4px] px-2.5 text-left text-sm text-foreground outline-none transition-colors duration-150",
+        "hover:bg-muted focus-visible:bg-muted",
+        "disabled:pointer-events-none disabled:opacity-50",
+        className,
+      )}
+    >
+      <span className="min-w-0 truncate">{children}</span>
+      {selected ? <CheckIcon size={16} aria-hidden="true" className="shrink-0" /> : null}
+    </button>
   );
 }

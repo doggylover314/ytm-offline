@@ -83,31 +83,20 @@ export function HomeDestinations({
 
   return (
     <section className="flex flex-col gap-3" aria-label="Go to">
-      <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fit,minmax(12rem,1fr))]">
+      <div className="grid grid-cols-4 gap-4">
         {cards.map((card) => (
           <button
             key={card.key}
             type="button"
             onClick={card.onClick}
-            className="group/dest flex items-center gap-3 rounded-xl bg-card p-4 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            className="flex min-w-0 items-center gap-3 rounded-lg bg-chrome p-4 text-left transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <card.icon
-              size={22}
-              strokeWidth={1.8}
-              className="shrink-0 text-primary"
-              aria-hidden="true"
-            />
+            <card.icon size={22} className="shrink-0 text-foreground" aria-hidden="true" />
             <span className="flex min-w-0 flex-col gap-0.5">
-              <span className="truncate text-sm font-semibold leading-none text-foreground">
-                {card.label}
+              <span className="truncate text-sm font-semibold text-foreground">{card.label}</span>
+              <span className="truncate text-[13px] tabular-nums text-muted-foreground">
+                {card.badge ?? card.hint}
               </span>
-              {card.badge ? (
-                <span className="truncate text-xs font-medium tabular-nums text-foreground/75">
-                  {card.badge}
-                </span>
-              ) : (
-                <span className="truncate text-xs text-muted-foreground">{card.hint}</span>
-              )}
             </span>
           </button>
         ))}

@@ -203,14 +203,14 @@ textarea:focus-visible {
 /*
  * The OS-level setting. Motion/React reads it (every `useReducedMotion` call goes straight to
  * this media query), but nothing was reading it for plain CSS — so a machine with Reduce
- * Motion on still got the spinner, the bouncing loader, the visualiser bars, the 44s lyrics
- * drift, the marquee and every hover transition in the app.
+ * Motion on still got the loader, the visualiser bars, the marquee and every hover
+ * transition in the app.
  *
  * Near-zero durations rather than `none`: an animation that never starts also never fires
  * `animationend`, and killing the event outright is a class of bug that only shows up in
  * whatever library grows a dependency on it later. `alternate` is reset because a reversing
- * animation with one iteration settles on its *start* frame, which for `.music-bar` and
- * `lyrics-drift` is the wrong end.
+ * animation with one iteration settles on its *start* frame, which for `.music-bar` is the
+ * wrong end.
  */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -297,99 +297,13 @@ html[data-fx-off~="will-change"] *::after {
   will-change: auto !important;
 }
 
-/* Whole layers, not properties — these are marked `data-fx` at their root in TSX. */
-html[data-fx-off~="ambient"] [data-fx~="ambient"] {
-  display: none !important;
-}
-
-html[data-fx-off~="lyrics-drift"] .lyrics-drift {
-  animation: none !important;
-  will-change: auto !important;
-}
-
-html[data-fx-off~="visualizer"] .music,
-html[data-fx-off~="visualizer"] .audio-loader,
-html[data-fx-off~="visualizer"] .spinner-steps {
+html[data-fx-off~="visualizer"] .music {
   display: none !important;
 }
 
 html[data-fx-off~="marquee"] .animate-marquee,
 html[data-fx-off~="marquee"] .animate-marquee-vertical {
   animation: none !important;
-}
-
-.audio-loader {
-  display: flex;
-  gap: 3px;
-  height: 40px;
-  align-items: flex-end;
-}
-
-.audio-loader span {
-  width: 4px;
-  height: 20px;
-  background: linear-gradient(
-    34deg,
-    rgb(240, 81, 72) 41%,
-    rgb(245, 200, 149) 100%
-  );
-  border-radius: 4px;
-  transform-origin: bottom center;
-  animation: bounce 0.7s infinite ease-in-out;
-}
-
-.audio-loader span:nth-child(1) {
-  animation-delay: 0s;
-  height: 20px;
-}
-
-.audio-loader span:nth-child(2) {
-  animation-delay: 0.1s;
-  height: 30px;
-}
-
-.audio-loader span:nth-child(3) {
-  animation-delay: 0.2s;
-  height: 45px;
-}
-
-.audio-loader span:nth-child(4) {
-  animation-delay: 0.1s;
-  height: 18px;
-}
-
-.audio-loader span:nth-child(5) {
-  animation-delay: 0s;
-  height: 10px;
-}
-
-@keyframes bounce {
-  0%,
-  100% {
-    transform: scaleY(0.3);
-  }
-  50% {
-    transform: scaleY(1);
-  }
-}
-
-@theme {
-  --animate-spinner-steps: spinner-steps 1s steps(8) infinite;
-
-  @keyframes spinner-steps {
-    from {
-      transform: rotate(0deg);
-    }
-    to {
-      transform: rotate(360deg);
-    }
-  }
-}
-
-@keyframes spinner-steps {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 /*
@@ -420,66 +334,6 @@ html[data-fx-off~="marquee"] .animate-marquee-vertical {
     transform: translateY(calc(-100% - var(--gap, 1rem)));
   }
 }
-
-.spinner-steps {
-  display: inline-block;
-  animation: spinner-steps var(--spinner-duration, 0.8s)
-    steps(12, end) infinite;
-  transform-origin: center;
-  will-change: transform;
-}
-
-/*
- * Lyrics: the sung portion of the active line, wiped left to right.
- *
- * `--sweep` is written straight onto the element by the animation frame that tracks
- * playback — a percentage in React state would re-render the whole column sixty times a
- * second to move one gradient stop. The two stops are offset so the edge is a soft ramp
- * rather than a hard cut, which at display sizes reads as light moving across the words
- * instead of a progress bar clipped to text.
- */
-.lyric-sweep {
-  background-image: linear-gradient(
-    90deg,
-    var(--color-foreground) calc(var(--sweep, 0%) - 4%),
-    color-mix(in oklab, var(--color-foreground) 28%, transparent) calc(var(--sweep, 0%) + 7%)
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-}
-
-/* For RTL Arabic language */
-[dir="rtl"] .lyric-sweep,
-.lyric-sweep[dir="rtl"],
-.lyric-sweep:dir(rtl) {
-  background-image: linear-gradient(
-    270deg,
-    var(--color-foreground) calc(var(--sweep, 0%) - 4%),
-    color-mix(in oklab, var(--color-foreground) 28%, transparent) calc(var(--sweep, 0%) + 7%)
-  );
-}
-
-/*
- * Slow parallax on the blurred cover behind the lyrics. Long and asymmetric on purpose: at
- * 44s nothing ever appears to move while you read, but the backdrop is never twice the same,
- * which is what keeps a static page from feeling like a screenshot.
- */
-@keyframes lyrics-drift {
-  0% {
-    transform: scale(1.25) translate3d(-2%, -1%, 0);
-  }
-  100% {
-    transform: scale(1.4) translate3d(2%, 2%, 0);
-  }
-}
-
-.lyrics-drift {
-  animation: lyrics-drift 44s ease-in-out infinite alternate;
-  will-change: transform;
-}
-
 
 /*
  * Music visualiser bars.
@@ -522,7 +376,7 @@ html[data-fx-off~="marquee"] .animate-marquee-vertical {
 .music-bar {
   flex: 1 1 0;
   height: 100%;
-  border-radius: 9999px;
+  border-radius: 1px;
   /*
    * The resting scale is set here as well as in the keyframes. Paper-PC mode kills every
    * animation with `animation: none !important`, and a bar whose height depends entirely on
@@ -532,4 +386,3 @@ html[data-fx-off~="marquee"] .animate-marquee-vertical {
   animation: play-music 2s ease-in-out infinite;
 }
 
-.mySong { border-radius: 10px; }

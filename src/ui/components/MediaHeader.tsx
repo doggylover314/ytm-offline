@@ -1,10 +1,24 @@
-import { useEffect, type ReactNode } from "react";
+import { useState, type MouseEvent, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Tooltip } from "@/components/motion/tooltip";
-import { DownloadActiveIcon, DownloadIcon, ListIcon, PauseActiveIcon, PlayActiveIcon, PlaylistAddIcon, RepeatActiveIcon, RepeatOneActiveIcon, ShuffleActiveIcon, ShuffleIcon } from "@/ui/icons";
+import {
+  DownloadActiveIcon,
+  DownloadIcon,
+  DownloadProgressIcon,
+  ListIcon,
+  MoreIcon,
+  PauseIcon,
+  PlayIcon,
+  PlaylistAddIcon,
+  RepeatActiveIcon,
+  RepeatIcon,
+  RepeatOneActiveIcon,
+  ShuffleActiveIcon,
+  ShuffleIcon,
+} from "@/ui/icons";
 import { SpinnerSteps } from "@/components/motion/loader";
+import { FloatingPanel } from "./FloatingPanel";
 import { TrackArtwork } from "./TrackArtwork";
-import { setAmbientArtwork } from "../stores/ambientArtworkStore";
 
 /**
  * "24 songs · 1 hr 32 min".
@@ -35,21 +49,30 @@ export function formatCollectionMeta(
   return `${countLabel} · ${durationLabel}`;
 }
 
+/** A page-specific entry in the header's More menu. */
+export interface MediaHeaderMenuItem {
+  label: string;
+  icon?: ReactNode;
+  /** Receives the click, so an item can open a context menu where the pointer is. */
+  onSelect: (event: MouseEvent<HTMLButtonElement>) => void;
+  disabled?: boolean;
+}
+
 interface MediaHeaderProps {
-  /** Small uppercase kicker: PLAYLIST, ALBUM, ARTIST. */
+  /** Small label above the title: Playlist, Album, Artist. */
   eyebrow: string;
   /** ReactNode so a page can make the title interactive — the artist page's copies its URL. */
   title: ReactNode;
-  /** Owner, artist links — the line directly under the title. */
+  /** Owner, artist links — leads the line under the title. */
   subtitle?: ReactNode;
-  /** Counts and durations; rendered quieter than the subtitle. */
+  /** Counts and durations; follows the subtitle on the same line. */
   meta?: ReactNode;
   artworkUrl?: string;
   artworkVariant?: "track" | "album" | "artist" | "playlist";
+  /** Side of the square artwork in CSS pixels: 200 for collections, 160 for artists. */
+  artworkSize?: keyof typeof ARTWORK_SIZE_CLASS;
   /** Replaces the artwork entirely — Liked Songs uses its own glyph. */
   artworkSlot?: ReactNode;
-  /** Artists read as people, so their image is circular. */
-  circularArtwork?: boolean;
   /**
    * The primary play/pause control. Omit to hide it.
    *
@@ -106,9 +129,30 @@ interface MediaHeaderProps {
     mode?: "in-order" | "repeat-all" | "repeat-one";
   };
   actionsDisabled?: boolean;
-  /** Extra controls beside play/shuffle, e.g. Subscribe. */
+  /** Extra controls after the download button, e.g. Subscribe. */
   actions?: ReactNode;
+  /** Page-specific entries appended to the More menu. */
+  menuItems?: MediaHeaderMenuItem[];
+  /** Quiet text at the end of the action row, e.g. "Synced 2 min ago". */
+  status?: ReactNode;
 }
+
+/** Literal classes, so Tailwind can see them. */
+const ARTWORK_SIZE_CLASS = { 200: "size-[200px]", 160: "size-40" } as const;
+
+const FOCUS_RING = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const DISABLED = "disabled:pointer-events-none disabled:opacity-50";
+/** 40px-tall secondary button: one grey step above the page, one more on hover. */
+export const HEADER_SECONDARY_BUTTON = cn(
+  "flex h-10 shrink-0 items-center justify-center gap-2 rounded bg-muted text-sm font-medium text-foreground transition-colors hover:bg-border",
+  FOCUS_RING,
+  DISABLED,
+);
+const MENU_ITEM = cn(
+  "flex h-9 w-full shrink-0 items-center gap-2.5 rounded px-2.5 text-left text-sm text-foreground transition-colors hover:bg-muted",
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+  DISABLED,
+);
 
 /**
  * Shared hero for the playlist, album and artist pages.
@@ -116,13 +160,8 @@ interface MediaHeaderProps {
  * All three previously hand-rolled the same artwork + title + shuffle arrangement, which is
  * how they ended up subtly different sizes and how only some of them offered a given action.
  *
- * Two deliberate design choices:
- *
- * - **Play is the primary action, shuffle is secondary.** These pages only offered Shuffle,
- *   so the obvious intent — play this, in order — had no button at all.
- * - **The artwork tints its own header.** The image is reused, blown up and blurred behind
- *   the text, so each collection carries its own colour without a palette extraction step or
- *   a second network request. Kept faint so it never competes with the title.
+ * Play is the primary action and the only filled button; shuffle and download are secondary,
+ * and everything else that acts on the whole collection lives in the More menu.
  */
 export function MediaHeader({
   eyebrow,
@@ -131,8 +170,8 @@ export function MediaHeader({
   meta,
   artworkUrl,
   artworkVariant = "playlist",
+  artworkSize = 200,
   artworkSlot,
-  circularArtwork = false,
   playback,
   onShuffle,
   shuffleEnabled = false,
@@ -142,6 +181,8 @@ export function MediaHeader({
   loop,
   actionsDisabled = false,
   actions,
+  menuItems = [],
+  status,
 }: MediaHeaderProps) {
   /* Destructured once, so the body below reads the same as it did when these were flat props
      rather than threading `playback?.` through every branch. */
@@ -151,48 +192,46 @@ export function MediaHeader({
   const downloadCounts = download?.counts;
   const loopMode = loop?.mode ?? "in-order";
   const isLooping = loopMode !== "in-order";
-  /*
-   * The wash is painted by Layout, which sits above the scroll container this header lives
-   * in — it has to start behind the search bar, and anything drawn here would be clipped at
-   * the scroller's top edge. Cleared on unmount so the tint leaves with the page.
-   */
-  useEffect(() => {
-    setAmbientArtwork(artworkUrl ?? null);
-    return () => setAmbientArtwork(null);
-  }, [artworkUrl]);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const hasMenu = Boolean(loop || onAddToQueue || onAddToPlaylist || menuItems.length > 0);
+
+  const selectMenuItem = (action: () => void) => {
+    setIsMenuOpen(false);
+    action();
+  };
 
   return (
-    <header className="relative flex flex-wrap items-end gap-6 px-1 pb-6 pt-2">
+    <header className="flex flex-wrap items-end gap-7">
       {artworkSlot ?? (
         <TrackArtwork
-          className={cn(
-            "size-44 shrink-0 shadow-2xl ring-1 ring-white/10",
-            circularArtwork ? "rounded-full" : "rounded-none",
-          )}
+          className={cn("shrink-0 rounded-lg", ARTWORK_SIZE_CLASS[artworkSize])}
           artworkUrl={artworkUrl}
-          iconSize={72}
+          iconSize={64}
           loading="eager"
           /*
-           * `size-44` is 176 CSS px. Without this the component skips size bucketing and keeps
-           * the original URL — and the stored `artworkUrl` is deliberately the *largest*
-           * candidate the source offered (see `selectArtworkUrl`), so this slot was decoding a
-           * full-size cover into a 176px box, eagerly, on every album, playlist and artist page.
+           * Without this the component skips size bucketing and keeps the original URL — and
+           * the stored `artworkUrl` is deliberately the *largest* candidate the source offered
+           * (see `selectArtworkUrl`), so this slot would decode a full-size cover, eagerly, on
+           * every album, playlist and artist page.
            */
-          size={176}
+          size={artworkSize}
           variant={artworkVariant}
         />
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <span className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          {eyebrow}
-        </span>
+      <div className="flex min-w-0 flex-1 flex-col gap-3">
+        <span className="text-[13px] text-muted-foreground">{eyebrow}</span>
         {/* Long album titles otherwise push the actions off the row entirely. */}
-        <h1 className="line-clamp-2 text-4xl font-bold tracking-[-0.03em] text-foreground">
+        <h1 className="line-clamp-2 text-[40px] font-semibold leading-[1.1] text-foreground">
           {title}
         </h1>
-        {subtitle ? <div className="text-sm text-foreground/80">{subtitle}</div> : null}
-        {meta ? <p className="text-xs text-muted-foreground">{meta}</p> : null}
+        {subtitle || meta ? (
+          <div className="flex flex-wrap items-center gap-x-1.5 text-sm text-muted-foreground">
+            {subtitle ? <span className="min-w-0">{subtitle}</span> : null}
+            {subtitle && meta ? <span aria-hidden="true">·</span> : null}
+            {meta ? <span>{meta}</span> : null}
+          </div>
+        ) : null}
 
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {playback ? (
@@ -201,93 +240,39 @@ export function MediaHeader({
              * Pause control while the track being played belongs here. Playing something
              * else leaves this reading "Play", which is what the button would then do.
              */
-            <Tooltip content={isPlaying ? "Pause" : "Play"}>
-              <button
-                type="button"
-                disabled={actionsDisabled}
-                onClick={playback.onToggle}
-                aria-label={isPlaying ? "Pause" : "Play"}
-                /* size-13 against the siblings' size-11: the primary action reads as primary
-                   through size and fill, so it does not need a word as well. Fixed width also
-                   drops the `min-w` that existed to stop Play/Pause/Loading jumping. */
-                className="flex size-13 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-transform hover:scale-[1.03] active:scale-95 disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-              >
-                {isLoading ? (
-                  <SpinnerSteps size={22} color="currentColor" />
-                ) : isPlaying ? (
-                  <PauseActiveIcon size={22} aria-hidden="true" />
-                ) : (
-                  <PlayActiveIcon size={22} aria-hidden="true" />
-                )}
-              </button>
-            </Tooltip>
-          ) : null}
-
-          {onShuffle ? (
             <button
               type="button"
               disabled={actionsDisabled}
-              onClick={onShuffle}
-              aria-pressed={shuffleEnabled}
-              aria-label={shuffleEnabled ? "Turn off shuffle" : "Turn on shuffle"}
-              title={shuffleEnabled ? "Shuffle on" : "Shuffle off"}
-              className={cn("flex size-11 items-center justify-center rounded-full transition-colors disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", shuffleEnabled ? "bg-muted text-primary" : "bg-card text-muted-foreground hover:text-foreground")}
+              onClick={playback.onToggle}
+              aria-label={isPlaying ? "Pause" : "Play"}
+              className={cn(
+                "flex h-10 min-w-24 shrink-0 items-center gap-1.5 rounded bg-foreground pl-3.5 pr-5 text-sm font-medium text-background transition-colors hover:bg-white",
+                FOCUS_RING,
+                DISABLED,
+              )}
             >
-              {shuffleEnabled ? <ShuffleActiveIcon size={20} aria-hidden="true" /> : <ShuffleIcon size={20} aria-hidden="true" />}
+              {isLoading ? (
+                <SpinnerSteps size={20} color="currentColor" />
+              ) : isPlaying ? (
+                <PauseIcon size={20} aria-hidden="true" />
+              ) : (
+                <PlayIcon size={20} aria-hidden="true" />
+              )}
+              {isPlaying ? "Pause" : "Play"}
             </button>
           ) : null}
 
-          {loop ? (
-            <Tooltip content={loopMode === "repeat-one" ? "Loop current song" : loopMode === "repeat-all" ? "Loop the whole playlist" : "Loop the whole playlist"}>
+          {onShuffle ? (
+            <Tooltip content={shuffleEnabled ? "Shuffle on" : "Shuffle off"}>
               <button
                 type="button"
                 disabled={actionsDisabled}
-                onClick={isLooping && loop.onCycle ? loop.onCycle : loop.onPlay}
-                aria-pressed={isLooping}
-                aria-label={loopMode === "repeat-one" ? "Loop current song" : loopMode === "repeat-all" ? "Loop queue" : "Play in loop"}
-                className={cn(
-                  "flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium transition-colors",
-                  "disabled:pointer-events-none disabled:opacity-50",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  isLooping
-                    ? "bg-primary/15 text-primary"
-                    : "bg-card text-foreground hover:bg-muted",
-                )}
+                onClick={onShuffle}
+                aria-pressed={shuffleEnabled}
+                aria-label={shuffleEnabled ? "Turn off shuffle" : "Turn on shuffle"}
+                className={cn(HEADER_SECONDARY_BUTTON, "w-10")}
               >
-                {loopMode === "repeat-one" ? (
-                  <RepeatOneActiveIcon size={18} aria-hidden="true" />
-                ) : (
-                  <RepeatActiveIcon size={18} aria-hidden="true" />
-                )}
-                {loopMode === "repeat-one" ? "Loop one" : loopMode === "repeat-all" ? "Loop all" : "Loop"}
-              </button>
-            </Tooltip>
-          ) : null}
-
-          {onAddToPlaylist ? (
-            <Tooltip content="Add every song here to a playlist">
-              <button
-                type="button"
-                disabled={actionsDisabled}
-                onClick={onAddToPlaylist}
-                aria-label="Add to playlist"
-                className="flex size-11 items-center justify-center rounded-full bg-card text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <PlaylistAddIcon size={18} aria-hidden="true" />
-              </button>
-            </Tooltip>
-          ) : null}
-
-          {onAddToQueue ? (
-            <Tooltip content="Add every song here to the queue">
-              <button
-                type="button"
-                disabled={actionsDisabled}
-                onClick={onAddToQueue}
-                aria-label="Add to queue"
-                className="flex size-11 items-center justify-center rounded-full bg-card text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <ListIcon size={18} aria-hidden="true" />
+                {shuffleEnabled ? <ShuffleActiveIcon size={20} aria-hidden="true" /> : <ShuffleIcon size={20} aria-hidden="true" />}
               </button>
             </Tooltip>
           ) : null}
@@ -303,6 +288,7 @@ export function MediaHeader({
             const remaining = Math.max(0, total - downloaded);
             // Never "all downloaded" while pages remain unfetched — the unseen ones are not.
             const allDownloaded = total > 0 && remaining === 0 && !downloadCounts?.isPartial;
+            const isSaved = Boolean(download.isSynced) || allDownloaded;
 
             return (
               <Tooltip
@@ -323,22 +309,116 @@ export function MediaHeader({
                   disabled={actionsDisabled || (allDownloaded && !download.onStop) || downloadBusy}
                   onClick={download.isSynced ? download.onStop : download.onStart}
                   aria-busy={downloadBusy}
+                  aria-pressed={isSaved}
                   aria-label={download.isSynced ? "Stop syncing playlist" : download.onStop ? "Download and sync playlist" : allDownloaded ? "Already downloaded" : "Download for offline"}
-                  className="relative flex size-11 items-center justify-center rounded-full bg-card text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className={cn(HEADER_SECONDARY_BUTTON, "pl-3 pr-4")}
                 >
                   {downloadBusy ? (
-                    <SpinnerSteps size={18} color="currentColor" />
-                  ) : download.isSynced || allDownloaded ? (
-                    <DownloadActiveIcon size={18} aria-hidden="true" className="text-primary" />
+                    <DownloadProgressIcon
+                      size={20}
+                      progress={total > 0 ? downloaded / total : 0}
+                      aria-hidden="true"
+                    />
+                  ) : isSaved ? (
+                    <DownloadActiveIcon size={20} aria-hidden="true" />
                   ) : (
-                    <DownloadIcon size={18} aria-hidden="true" />
+                    <DownloadIcon size={20} aria-hidden="true" />
                   )}
+                  {downloadBusy ? "Downloading" : isSaved ? "Downloaded" : "Download"}
                 </button>
               </Tooltip>
             );
           })() : null}
 
           {actions}
+
+          {hasMenu ? (
+            <FloatingPanel
+              open={isMenuOpen}
+              onOpenChange={setIsMenuOpen}
+              side="bottom"
+              className="flex min-w-56 flex-col border border-border bg-card p-1.5 shadow-none ring-0"
+              trigger={
+                <Tooltip content="More">
+                  <button
+                    type="button"
+                    onClick={() => setIsMenuOpen((open) => !open)}
+                    aria-label="More"
+                    aria-haspopup="menu"
+                    aria-expanded={isMenuOpen}
+                    className={cn(
+                      "flex size-10 shrink-0 items-center justify-center rounded text-foreground transition-colors hover:bg-card",
+                      FOCUS_RING,
+                    )}
+                  >
+                    <MoreIcon size={20} aria-hidden="true" />
+                  </button>
+                </Tooltip>
+              }
+            >
+              <div role="menu" aria-label="More actions" className="flex flex-col">
+                {loop ? (
+                  <button
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={isLooping}
+                    disabled={actionsDisabled}
+                    onClick={() => selectMenuItem(isLooping && loop.onCycle ? loop.onCycle : loop.onPlay)}
+                    aria-label={loopMode === "repeat-one" ? "Loop current song" : loopMode === "repeat-all" ? "Loop queue" : "Play in loop"}
+                    className={MENU_ITEM}
+                  >
+                    {loopMode === "repeat-one" ? (
+                      <RepeatOneActiveIcon size={18} aria-hidden="true" />
+                    ) : loopMode === "repeat-all" ? (
+                      <RepeatActiveIcon size={18} aria-hidden="true" />
+                    ) : (
+                      <RepeatIcon size={18} aria-hidden="true" />
+                    )}
+                    {loopMode === "repeat-one" ? "Loop one" : loopMode === "repeat-all" ? "Loop all" : "Loop"}
+                  </button>
+                ) : null}
+                {onAddToQueue ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={actionsDisabled}
+                    onClick={() => selectMenuItem(onAddToQueue)}
+                    className={MENU_ITEM}
+                  >
+                    <ListIcon size={18} aria-hidden="true" />
+                    Add to queue
+                  </button>
+                ) : null}
+                {onAddToPlaylist ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={actionsDisabled}
+                    onClick={() => selectMenuItem(onAddToPlaylist)}
+                    className={MENU_ITEM}
+                  >
+                    <PlaylistAddIcon size={18} aria-hidden="true" />
+                    Add to playlist
+                  </button>
+                ) : null}
+                {menuItems.map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    role="menuitem"
+                    disabled={item.disabled}
+                    onClick={(event) => selectMenuItem(() => item.onSelect(event))}
+                    className={MENU_ITEM}
+                  >
+                    {item.icon}
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </FloatingPanel>
+          ) : null}
+
+          {status ? <span className="ml-2 text-[13px] text-muted-foreground">{status}</span> : null}
         </div>
       </div>
     </header>

@@ -235,18 +235,29 @@ export function EqualizerGraph({ compact = false, disabled = false }: { compact?
           onPointerLeave={() => setHoverBand(null)}
           onDoubleClick={onDoubleClick}
           className={cn(
-            "relative min-w-0 flex-1 touch-none select-none rounded-xl bg-background/40",
+            "relative min-w-0 flex-1 touch-none select-none rounded-lg bg-background",
             compact ? "h-24" : "h-52",
             disabled ? "pointer-events-none" : grabbing ? "cursor-grabbing" : "cursor-crosshair",
           )}
         >
+          {/* Under the grid lines, so the hovered column reads as a surface, not a veil. */}
+          {shownBand !== null && (
+            <motion.div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 w-[10%] rounded bg-chrome"
+              initial={false}
+              animate={{ left: `${shownBand * 10}%` }}
+              transition={reduceMotion ? { duration: 0 } : SPRING_LAYOUT}
+            />
+          )}
+
           {GRID_DB.map((db) => (
             <div
               key={db}
               aria-hidden="true"
               className={cn(
                 "pointer-events-none absolute inset-x-0 h-px",
-                db === 0 ? "bg-foreground/15" : "bg-foreground/5",
+                db === 0 ? "bg-border" : "bg-card",
               )}
               style={{ top: `${yOf(db)}%` }}
             />
@@ -255,20 +266,10 @@ export function EqualizerGraph({ compact = false, disabled = false }: { compact?
             <div
               key={hz}
               aria-hidden="true"
-              className="pointer-events-none absolute inset-y-0 w-px bg-foreground/5"
+              className="pointer-events-none absolute inset-y-0 w-px bg-card"
               style={{ left: `${frequencyPosition(hz) * 100}%` }}
             />
           ))}
-
-          {shownBand !== null && (
-            <motion.div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-y-0 w-[10%] rounded-lg bg-foreground/5"
-              initial={false}
-              animate={{ left: `${shownBand * 10}%` }}
-              transition={reduceMotion ? { duration: 0 } : SPRING_LAYOUT}
-            />
-          )}
 
           <svg
             viewBox="0 0 100 100"
@@ -277,11 +278,6 @@ export function EqualizerGraph({ compact = false, disabled = false }: { compact?
             className="pointer-events-none absolute inset-0 size-full overflow-visible text-foreground"
           >
             <defs>
-              <linearGradient id={`${svgId}-fill`} gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="100">
-                <stop offset="0" stopColor="currentColor" stopOpacity="0.2" />
-                <stop offset="0.5" stopColor="currentColor" stopOpacity="0" />
-                <stop offset="1" stopColor="currentColor" stopOpacity="0.2" />
-              </linearGradient>
               <clipPath id={`${svgId}-over`}>
                 <motion.rect
                   x="0"
@@ -294,7 +290,7 @@ export function EqualizerGraph({ compact = false, disabled = false }: { compact?
               </clipPath>
             </defs>
             <motion.path
-              fill={`url(#${svgId}-fill)`}
+              className="fill-muted"
               initial={false}
               animate={{ d: `${line}L100,50L0,50Z` }}
               transition={glide}
@@ -312,13 +308,7 @@ export function EqualizerGraph({ compact = false, disabled = false }: { compact?
             {enabled && (
               <g clipPath={`url(#${svgId}-over)`}>
                 <motion.path
-                  className="fill-primary/25"
-                  initial={false}
-                  animate={{ d: `${line}L100,${ceilingY.toFixed(2)}L0,${ceilingY.toFixed(2)}Z` }}
-                  transition={glide}
-                />
-                <motion.path
-                  className="fill-none stroke-primary"
+                  className="fill-none stroke-destructive"
                   strokeWidth={2}
                   strokeLinejoin="round"
                   vectorEffect="non-scaling-stroke"
@@ -334,7 +324,7 @@ export function EqualizerGraph({ compact = false, disabled = false }: { compact?
           {enabled && (
             <motion.div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-x-0 border-t border-dashed border-foreground/30"
+              className="pointer-events-none absolute inset-x-0 border-t border-dashed border-muted-foreground"
               initial={false}
               animate={{ top: `${ceilingY}%` }}
               transition={glide}
@@ -366,7 +356,7 @@ export function EqualizerGraph({ compact = false, disabled = false }: { compact?
                 transition={{ top: glide, scale: reduceMotion ? { duration: 0 } : SPRING_PRESS }}
                 style={{ left: `${frequencyPosition(hz) * 100}%` }}
                 className={cn(
-                  "absolute -translate-x-1/2 -translate-y-1/2 rounded-full shadow-sm transition-colors",
+                  "absolute -translate-x-1/2 -translate-y-1/2 rounded-[2px] transition-colors",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   compact ? "size-2.5" : "size-3",
                   gain === 0 ? "bg-muted-foreground" : "bg-foreground",
@@ -418,7 +408,7 @@ function BandReadout({ band, gain, compact }: { band: number; gain: number; comp
       // Shifted back by its own width in proportion, so end-band readouts stay inside the plot.
       style={{ left: `${x}%`, x: `-${x}%` }}
       className={cn(
-        "pointer-events-none absolute z-10 whitespace-nowrap rounded-lg bg-popover px-2 py-1 shadow-lg",
+        "pointer-events-none absolute z-10 whitespace-nowrap rounded border border-border bg-card px-2 py-1",
         // Out of the node's way: below the zero line for a boost, above it otherwise.
         gain > 0 ? "bottom-1.5" : "top-1.5",
       )}
@@ -429,7 +419,7 @@ function BandReadout({ band, gain, compact }: { band: number; gain: number; comp
         </span>
       ) : (
         <>
-          <span className="block text-[10px] text-muted-foreground">
+          <span className="block text-[11px] text-muted-foreground">
             {spokenHz(hz)} · {BAND_ROLES[band]}
           </span>
           <span className="block text-sm font-semibold tabular-nums text-foreground">
@@ -466,21 +456,21 @@ export function EqualizerPresets({
       disabled={disabled}
       onClick={onSelect}
       className={cn(
-        "relative rounded-full font-medium transition-colors",
+        "relative rounded font-medium transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-        compact ? "px-2 py-0.5 text-[10px]" : "px-3 py-1 text-xs",
+        compact ? "h-6 px-2 text-[11px]" : "h-8 px-3 text-[13px]",
         isActive
-          ? "text-primary-foreground"
+          ? "text-background"
           : compact
-            ? "bg-card text-foreground hover:bg-muted"
-            : "bg-background/40 text-foreground hover:bg-card",
+            ? "bg-muted text-foreground hover:bg-border"
+            : "bg-card text-foreground hover:bg-muted",
       )}
     >
-      {/* One pill, handed between chips, so switching presets reads as a single motion. */}
+      {/* One highlight, handed between chips, so switching presets reads as a single motion. */}
       {isActive && (
         <motion.span
           layoutId={pillId}
-          className="absolute inset-0 rounded-full bg-primary"
+          className="absolute inset-0 rounded bg-foreground"
           transition={reduceMotion ? { duration: 0 } : SPRING_LAYOUT}
         />
       )}
@@ -503,7 +493,7 @@ export function EqualizerPresets({
 type Editing = { mode: "save" } | { mode: "rename"; from: string };
 
 const ROW_BUTTON =
-  "flex h-7 items-center gap-1.5 rounded-full text-xs font-medium text-muted-foreground transition-colors hover:bg-card hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+  "flex h-8 items-center gap-1.5 rounded text-[13px] font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 /** Actions for the lit chip: save Custom, or rename/delete a user preset. Built-ins have none. */
 function EqualizerPresetActions() {
@@ -545,7 +535,7 @@ function EqualizerPresetActions() {
           type="button"
           aria-label={`Rename ${name}`}
           onClick={() => setEditing({ mode: "rename", from: name })}
-          className={cn(ROW_BUTTON, "w-7 justify-center")}
+          className={cn(ROW_BUTTON, "w-8 justify-center")}
         >
           <PencilIcon size={14} aria-hidden="true" />
         </button>
@@ -555,7 +545,7 @@ function EqualizerPresetActions() {
           type="button"
           aria-label={`Delete ${name}`}
           onClick={() => deleteEqualizerPreset(name)}
-          className={cn(ROW_BUTTON, "w-7 justify-center hover:text-destructive")}
+          className={cn(ROW_BUTTON, "w-8 justify-center hover:text-destructive")}
         >
           <TrashIcon size={14} aria-hidden="true" />
         </button>
@@ -595,12 +585,12 @@ function PresetNameEditor({ renaming, onDone }: { renaming?: string; onDone: () 
         aria-label={renaming ? `New name for ${renaming}` : "Preset name"}
         aria-invalid={error !== null}
         aria-describedby={error ? errorId : undefined}
-        className="h-7 w-36 rounded-full bg-background px-3 text-xs text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className="h-8 w-40 rounded bg-background px-3 text-[13px] text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       />
       <button
         type="submit"
         disabled={error !== null}
-        className="h-7 rounded-full bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="h-8 rounded bg-foreground px-3 text-[13px] font-medium text-background transition-colors hover:bg-white disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {renaming !== undefined ? "Rename" : replaces ? "Replace" : "Save"}
       </button>
@@ -616,7 +606,7 @@ function PresetNameEditor({ renaming, onDone }: { renaming?: string; onDone: () 
   );
 }
 
-/** Preamp, and the headroom left at the curve's peak. Over 0 dB is flagged like the graph's red. */
+/** Preamp, and the headroom left at the curve's peak. Over 0 dB is flagged in the graph's warning colour. */
 function EqualizerPreamp({ disabled }: { disabled: boolean }) {
   const { bandsDb, preampDb } = useEqualizer();
   const enabled = useEqualizerEnabled();
@@ -651,15 +641,15 @@ function EqualizerPreamp({ disabled }: { disabled: boolean }) {
             onClick={() => setPreamp(auto)}
             className={cn(
               ROW_BUTTON,
-              "px-3 text-foreground disabled:pointer-events-none disabled:opacity-50",
-              over ? "bg-primary/15 hover:bg-primary/25" : "bg-background/40",
+              "bg-muted px-3 hover:bg-border disabled:pointer-events-none disabled:opacity-50",
+              over && "text-destructive",
             )}
           >
             Auto
           </button>
         </Tooltip>
       </div>
-      <p className={cn("pl-[4.25rem] text-xs tabular-nums", over ? "text-primary" : "text-muted-foreground")}>
+      <p className={cn("pl-[4.25rem] text-[13px] tabular-nums", over ? "text-destructive" : "text-muted-foreground")}>
         {!enabled
           ? "Bypassed — the track plays untouched."
           : over
@@ -678,7 +668,7 @@ export function EqualizerPanel({ disabled }: { disabled: boolean }) {
       <EqualizerPresets disabled={disabled}>{!disabled && <EqualizerPresetActions />}</EqualizerPresets>
       <EqualizerGraph disabled={disabled} />
       <EqualizerPreamp disabled={disabled} />
-      <p className="text-xs text-muted-foreground">
+      <p className="text-[13px] text-muted-foreground">
         Changes play as you make them. Drag a point, or sweep across the graph to draw a curve;
         double-click a band to flatten it. Anything over the dashed line is held back by the
         limiter — lower the preamp, or let Auto do it.

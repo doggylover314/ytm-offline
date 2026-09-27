@@ -1,7 +1,14 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { cn } from "@/lib/utils";
+import { cn, formatMinutesSeconds } from "@/lib/utils";
 import { SpinnerSteps } from "@/components/motion/loader";
-import { PlayActiveIcon } from "@/ui/icons";
+import {
+  BackIcon,
+  DownloadActiveIcon,
+  DownloadIcon,
+  DownloadProgressIcon,
+  PlayIcon,
+  SearchIcon,
+} from "@/ui/icons";
 import type {
   Album,
   Artist,
@@ -11,6 +18,12 @@ import type {
   Track,
 } from "../../datasource/types";
 import { libraryController, type PlayerControllerActions } from "../../player/playerStore";
+import {
+  getOfflineStatus,
+  queueDownload,
+  removeDownload,
+  useOfflineState,
+} from "../../player/offlineStore";
 import { AlbumCard } from "../components/AlbumCard";
 import { ArtistLinks } from "../components/ArtistLinks";
 import { TrackArtwork } from "../components/TrackArtwork";
@@ -64,6 +77,84 @@ function buildFlatItems(results: SearchResults, songsFirst: boolean): Selectable
   return items;
 }
 
+/** Rectangular filter chip; the selected one inverts. */
+const CHIP = "h-8 rounded px-3 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+type TopResult =
+  | { kind: "artist"; artist: Artist }
+  | { kind: "track"; track: Track }
+  | { kind: "album"; album: Album }
+  | { kind: "playlist"; playlist: Playlist };
+
+/**
+ * A song's download state as a glyph: outline when absent, filling while it downloads, filled
+ * once it is on disk. Subscribes on its own so download progress does not re-render the page.
+ */
+function useDownloadState(track: Track) {
+  const offline = useOfflineState();
+  const status = getOfflineStatus(track.id);
+  const toggle = () => {
+    if (status === "ready") void removeDownload(track.id);
+    else queueDownload(track);
+  };
+  const label = status === "ready" ? `Remove ${track.title} from downloads` : `Download ${track.title}`;
+  const icon = (size: number) => status === "ready"
+    ? <DownloadActiveIcon size={size} aria-hidden="true" />
+    : status === "downloading"
+      ? <DownloadProgressIcon size={size} progress={(offline.progress ?? 0) / 100} aria-hidden="true" />
+      : <DownloadIcon size={size} aria-hidden="true" />;
+  return { status, toggle, label, icon };
+}
+
+function RowDownloadToggle({ track }: { track: Track }) {
+  const { status, toggle, label, icon } = useDownloadState(track);
+  if (track.source === "local") return <span className="size-[18px] shrink-0" aria-hidden="true" />;
+  return (
+    // A span, not a button: it sits inside the row's own button.
+    <span
+      role="button"
+      tabIndex={0}
+      aria-label={label}
+      aria-pressed={status === "ready"}
+      className={cn(
+        "grid size-7 shrink-0 place-items-center rounded transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        status === "failed" ? "text-destructive" : "text-foreground",
+      )}
+      onClick={(event) => {
+        event.stopPropagation();
+        toggle();
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        event.stopPropagation();
+        toggle();
+      }}
+    >
+      {icon(18)}
+    </span>
+  );
+}
+
+function TopResultDownloadButton({ track }: { track: Track }) {
+  const { status, toggle, label, icon } = useDownloadState(track);
+  if (track.source === "local") return null;
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={status === "ready"}
+      onClick={toggle}
+      className={cn(
+        "grid size-9 place-items-center rounded bg-muted transition-colors hover:bg-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        status === "failed" ? "text-destructive" : "text-foreground",
+      )}
+    >
+      {icon(20)}
+    </button>
+  );
+}
+
 function SearchLoadingSpinner() {
   return (
     <div className="grid place-items-center px-2 py-16 text-muted-foreground" role="status" aria-live="polite" aria-label="Searching">
@@ -81,6 +172,8 @@ export function SearchResultsPage({
   onOpenArtist,
   onOpenAlbum,
   onOpenPlaylist,
+  onBack,
+  onEditSearch,
 }: {
   query: string;
   results: SearchResults;
@@ -90,6 +183,10 @@ export function SearchResultsPage({
   onOpenArtist: (artist: Artist) => void;
   onOpenAlbum: (album: Album) => void;
   onOpenPlaylist: (playlist: Playlist) => void;
+  /** Shows a back button beside the search field. */
+  onBack?: () => void;
+  /** Reopens search. When given, the query is shown in a search field rather than a heading. */
+  onEditSearch?: () => void;
 }) {
   const { openTrackMenu } = useTrackContextMenu();
   const { openPlaylistMenu, openAlbumMenu } = usePlaylistContextMenu();
@@ -193,10 +290,31 @@ export function SearchResultsPage({
     else void playerController.playTrackById(track.id, scopedResults.tracks, true);
   }, [onPlayTrack, playerController, scopedResults.tracks]);
 
+  /*
+   * Songs always come first on screen now (beside the top result), so keyboard order follows
+   * them. `songsFirst` still decides what the top result is.
+   */
   const flatItems = useMemo(
-    () => buildFlatItems(scopedResults, songsFirst),
-    [scopedResults, songsFirst],
+    () => buildFlatItems(scopedResults, true),
+    [scopedResults],
   );
+
+  const topResult = useMemo<TopResult | null>(() => {
+    if (scope !== "all") return null;
+    const exactArtist = hasExactArtist && !songsFirst
+      ? scopedResults.artists.find((artist) => normalizeSearchKey(artist.name) === normalizedQuery)
+      : undefined;
+    if (exactArtist) return { kind: "artist", artist: exactArtist };
+    const exactTrack = scopedResults.tracks.find(
+      (track) => normalizeSearchKey(track.title) === normalizedQuery,
+    );
+    const track = exactTrack ?? scopedResults.tracks[0];
+    if (track) return { kind: "track", track };
+    if (scopedResults.artists[0]) return { kind: "artist", artist: scopedResults.artists[0] };
+    if (scopedResults.albums[0]) return { kind: "album", album: scopedResults.albums[0] };
+    if (scopedResults.playlists[0]) return { kind: "playlist", playlist: scopedResults.playlists[0] };
+    return null;
+  }, [hasExactArtist, normalizedQuery, scope, scopedResults, songsFirst]);
 
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isKeyboardNav, setIsKeyboardNav] = useState(false);
@@ -294,13 +412,7 @@ export function SearchResultsPage({
   }, []);
 
   const selected = useCallback(
-    (index: number) => (isKeyboardNav && index === selectedIndex ? "bg-primary/15 text-foreground" : ""),
-    [isKeyboardNav, selectedIndex],
-  );
-
-  const selectedAlbumCard = useCallback(
-    (index: number) =>
-      isKeyboardNav && index === selectedIndex ? "bg-primary/15 text-foreground" : "",
+    (index: number) => (isKeyboardNav && index === selectedIndex ? "bg-card" : ""),
     [isKeyboardNav, selectedIndex],
   );
 
@@ -308,18 +420,179 @@ export function SearchResultsPage({
     "--search-enter-delay": `${Math.min(Math.max(index, 0), 18) * 28}ms`,
   } as CSSProperties), []);
 
-  return (
-    <div className="flex flex-col gap-8">
-      <header className="flex flex-col gap-3">
-        <div>
-          <p className="text-lg font-semibold text-foreground">Search results</p>
-          <h1>{query}</h1>
+  const songsSection = scopedResults.tracks.length > 0 && (
+    <section className="flex min-w-0 flex-col gap-3">
+      <h2 className="text-xl font-semibold">Songs</h2>
+      <div className="flex flex-col gap-0.5" data-onboarding="search-results">
+        {scopedResults.tracks.map((track) => {
+          const index = flatItems.findIndex(
+            (item) => item.kind === "track" && item.track.id === track.id,
+          );
+          return (
+            <button
+              key={track.id}
+              type="button"
+              data-selectable-index={index}
+              className={cn(
+                "group/row flex w-full items-center gap-3 rounded px-2 py-1.5 text-left transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                "animate-in fade-in",
+                selected(index),
+              )}
+              style={enterStyle(index)}
+              onContextMenu={(event) => openTrackMenu(event, track)}
+              onClick={() => playTrack(track)}
+              onMouseEnter={() => handleMouseEnter(index)}
+            >
+              <TrackArtwork
+                className="size-10 shrink-0 rounded bg-card object-cover"
+                size={40}
+                artworkUrl={track.artworkUrl}
+                iconSize={20}
+              />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <strong className="truncate text-sm font-semibold text-foreground">{track.title}</strong>
+                <span className="truncate text-[13px] text-muted-foreground">
+                  <ArtistLinks artists={track.artists} fallback={track.artist} />
+                </span>
+              </span>
+              <span className="hidden w-[200px] shrink-0 truncate text-[13px] text-muted-foreground xl:block">
+                {track.album}
+              </span>
+              <RowDownloadToggle track={track} />
+              <time className="w-10 shrink-0 text-right text-[13px] text-muted-foreground">
+                {track.durationSec != null ? formatMinutesSeconds(track.durationSec) : ""}
+              </time>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+
+  const openTopResult = (result: TopResult) => {
+    if (result.kind === "track") playTrack(result.track);
+    else if (result.kind === "artist") onOpenArtist(result.artist);
+    else if (result.kind === "album") onOpenAlbum(result.album);
+    else onOpenPlaylist(result.playlist);
+  };
+
+  const topResultSection = topResult && (
+    <section className="flex flex-col gap-3">
+      <h2 className="text-xl font-semibold">Top result</h2>
+      <div
+        className="flex flex-col gap-4 rounded-lg bg-chrome p-5"
+        onContextMenu={topResult.kind === "track"
+          ? (event) => openTrackMenu(event, topResult.track)
+          : topResult.kind === "album"
+            ? (event) => openAlbumMenu(event, topResult.album)
+            : topResult.kind === "playlist"
+              ? (event) => openPlaylistMenu(event, topResult.playlist)
+              : undefined}
+      >
+        <TrackArtwork
+          className="size-[120px] shrink-0 rounded-lg bg-card object-cover"
+          size={120}
+          artworkUrl={
+            topResult.kind === "track" ? topResult.track.artworkUrl
+              : topResult.kind === "artist" ? topResult.artist.artworkUrl
+                : topResult.kind === "album" ? topResult.album.artworkUrl
+                  : topResult.playlist.artworkUrl
+          }
+          iconSize={48}
+          loading="eager"
+          variant={topResult.kind === "track" ? "track" : topResult.kind}
+        />
+        <div className="flex min-w-0 flex-col gap-1">
+          <span className="truncate text-2xl font-semibold text-foreground">
+            {topResult.kind === "track" ? topResult.track.title
+              : topResult.kind === "artist" ? topResult.artist.name
+                : topResult.kind === "album" ? topResult.album.title
+                  : topResult.playlist.title}
+          </span>
+          <span className="truncate text-[13px] text-muted-foreground">
+            {topResult.kind === "track" ? (
+              <>
+                Song · <ArtistLinks artists={topResult.track.artists} fallback={topResult.track.artist} />
+                {topResult.track.durationSec != null && ` · ${formatMinutesSeconds(topResult.track.durationSec)}`}
+              </>
+            ) : topResult.kind === "artist" ? (
+              topResult.artist.subscriberCount ? `Artist · ${topResult.artist.subscriberCount}` : "Artist"
+            ) : topResult.kind === "album" ? (
+              `Album · ${topResult.album.artist}`
+            ) : (
+              `Playlist · ${topResult.playlist.owner}`
+            )}
+          </span>
         </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => openTopResult(topResult)}
+            className="flex h-9 items-center gap-1.5 rounded bg-foreground pl-3 pr-4 text-sm font-medium text-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {topResult.kind === "track" ? (
+              <>
+                <PlayIcon size={18} aria-hidden="true" />
+                Play
+              </>
+            ) : (
+              <span className="pl-1">Open</span>
+            )}
+          </button>
+          {topResult.kind === "track" && <TopResultDownloadButton track={topResult.track} />}
+        </div>
+      </div>
+    </section>
+  );
+
+  return (
+    <div className="flex flex-col gap-6">
+      <header className="flex flex-col gap-6">
+        {onEditSearch ? (
+          <div className="flex items-center gap-3 self-center">
+            {onBack ? (
+              <button
+                type="button"
+                onClick={onBack}
+                aria-label="Back"
+                className="grid size-10 shrink-0 place-items-center rounded text-foreground transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <BackIcon size={20} aria-hidden="true" />
+              </button>
+            ) : (
+              <span className="size-10 shrink-0" aria-hidden="true" />
+            )}
+            <button
+              type="button"
+              onClick={onEditSearch}
+              aria-label={`Search: ${query}`}
+              className="flex h-11 w-[600px] min-w-0 items-center gap-2.5 rounded bg-card px-3.5 text-left text-[15px] text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-foreground"
+            >
+              <SearchIcon size={20} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span className="truncate">{query}</span>
+            </button>
+            <span className="size-10 shrink-0" aria-hidden="true" />
+          </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            {onBack && (
+              <button
+                type="button"
+                onClick={onBack}
+                aria-label="Back"
+                className="grid size-10 shrink-0 place-items-center rounded text-foreground transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <BackIcon size={20} aria-hidden="true" />
+              </button>
+            )}
+            <h1 className="min-w-0 truncate text-[32px] font-semibold text-foreground">{query}</h1>
+          </div>
+        )}
 
         {/* Only offered when there is something to narrow to: a row of filters where every
             one but "All" is empty is just noise. */}
         {!isLoading && availableScopes.length > 2 && (
-          <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter results">
+          <div className="flex flex-wrap gap-2" role="tablist" aria-label="Filter results">
             {availableScopes.map((item) => (
               <button
                 key={item.value}
@@ -328,11 +601,10 @@ export function SearchResultsPage({
                 aria-selected={scope === item.value}
                 onClick={() => setScope(item.value)}
                 className={cn(
-                  "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  CHIP,
                   scope === item.value
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-card text-muted-foreground hover:text-foreground",
+                    ? "bg-foreground text-background"
+                    : "bg-card text-foreground hover:bg-muted",
                 )}
               >
                 {item.label}
@@ -353,72 +625,38 @@ export function SearchResultsPage({
         <p className="px-2 py-10 text-center text-sm text-muted-foreground">No results found.</p>
       ) : (
         <div className="flex flex-col gap-8">
+          {topResultSection ? (
+            <div className="grid gap-10 [grid-template-columns:400px_minmax(0,1fr)]">
+              {topResultSection}
+              {songsSection}
+            </div>
+          ) : songsSection}
+
           {scopedResults.artists.length > 0 && (
-            <section className="flex flex-col gap-3" style={{ order: songsFirst ? 1 : 0 }}>
-              <h2>Artists</h2>
-              <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr))]">
+            <section className="flex flex-col gap-3">
+              <h2 className="text-xl font-semibold">Artists</h2>
+              <div className="grid grid-cols-8 gap-5">
                 {scopedResults.artists.map((artist) => {
                   const index = flatItems.findIndex(
                     (item) => item.kind === "artist" && item.artist.id === artist.id,
                   );
                   return (
-                    <button
+                    <div
                       key={artist.id}
-                      type="button"
                       data-selectable-index={index}
-                      className={`${"flex flex-col items-center gap-2 rounded-xl p-3 transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"} ${"animate-in fade-in"} ${selected(index)}`}
+                      className={cn("animate-in fade-in rounded-lg", selected(index))}
                       style={enterStyle(index)}
-                      onClick={() => onOpenArtist(artist)}
                       onMouseEnter={() => handleMouseEnter(index)}
                     >
-                      <TrackArtwork
-                        className="size-24 rounded-full object-cover"
-                        size={96}
+                      <AlbumCard
                         artworkUrl={artist.artworkUrl}
-                        iconSize={42}
                         variant="artist"
+                        size={128}
+                        title={artist.name}
+                        subtitle={artist.subscriberCount || "Artist"}
+                        onClick={() => onOpenArtist(artist)}
                       />
-                      <strong>{artist.name}</strong>
-                      <span>{artist.subscriberCount || "Artist"}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-          )}
-
-          {scopedResults.tracks.length > 0 && (
-            <section className="flex flex-col gap-3" style={{ order: songsFirst ? 0 : 1 }}>
-              <h2>Songs</h2>
-              <div className="flex flex-col gap-0.5" data-onboarding="search-results">
-                {scopedResults.tracks.map((track, displayIndex) => {
-                  const index = flatItems.findIndex(
-                    (item) => item.kind === "track" && item.track.id === track.id,
-                  );
-                  return (
-                    <button
-                      key={track.id}
-                      type="button"
-                      data-selectable-index={index}
-                      className={`${"group/row flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"} ${"animate-in fade-in"} ${selected(index)}`}
-                      style={enterStyle(index)}
-                      onContextMenu={(event) => openTrackMenu(event, track)}
-                      onClick={() => playTrack(track)}
-                      onMouseEnter={() => handleMouseEnter(index)}
-                    >
-                      <span className="w-5 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{displayIndex + 1}</span>
-                      <TrackArtwork
-                        className="size-11 shrink-0 rounded-md object-cover"
-                        size={44}
-                        artworkUrl={track.artworkUrl}
-                        iconSize={24}
-                      />
-                      <span className="flex min-w-0 flex-1 flex-col [&_span]:truncate [&_span]:text-xs [&_span]:text-muted-foreground [&_strong]:truncate [&_strong]:text-sm [&_strong]:font-medium">
-                        <strong>{track.title}</strong>
-                        <ArtistLinks artists={track.artists} fallback={track.artist} />
-                      </span>
-                      <PlayActiveIcon size={18} />
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -426,9 +664,9 @@ export function SearchResultsPage({
           )}
 
           {scopedResults.albums.length > 0 && (
-            <section className="flex flex-col gap-3" style={{ order: 2 }}>
-              <h2>Albums</h2>
-              <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr))]">
+            <section className="flex flex-col gap-3">
+              <h2 className="text-xl font-semibold">Albums</h2>
+              <div className="grid grid-cols-8 gap-5">
                 {scopedResults.albums.map((album) => {
                   const index = flatItems.findIndex(
                     (item) => item.kind === "album" && item.album.id === album.id,
@@ -437,12 +675,13 @@ export function SearchResultsPage({
                     <div
                       key={album.id}
                       data-selectable-index={index}
-                      className={`${"animate-in fade-in"} ${selectedAlbumCard(index)}`}
+                      className={cn("animate-in fade-in rounded-lg", selected(index))}
                       style={enterStyle(index)}
                       onMouseEnter={() => handleMouseEnter(index)}
                     >
                       <AlbumCard
                         artworkUrl={album.artworkUrl}
+                        size={128}
                         title={album.title}
                         subtitleContent={(
                           <ArtistLinks artists={album.artists} fallback={album.artist} />
@@ -458,9 +697,9 @@ export function SearchResultsPage({
           )}
 
           {scopedResults.playlists.length > 0 && (
-            <section className="flex flex-col gap-3" style={{ order: 3 }}>
-              <h2>Playlists</h2>
-              <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr))]">
+            <section className="flex flex-col gap-3">
+              <h2 className="text-xl font-semibold">Playlists</h2>
+              <div className="grid grid-cols-8 gap-5">
                 {scopedResults.playlists.map((playlist) => {
                   const index = flatItems.findIndex(
                     (item) => item.kind === "playlist" && item.playlist.id === playlist.id,
@@ -469,12 +708,14 @@ export function SearchResultsPage({
                     <div
                       key={playlist.id}
                       data-selectable-index={index}
-                      className={`${"animate-in fade-in"} ${selectedAlbumCard(index)}`}
+                      className={cn("animate-in fade-in rounded-lg", selected(index))}
                       style={enterStyle(index)}
                       onMouseEnter={() => handleMouseEnter(index)}
                     >
                       <AlbumCard
                         artworkUrl={playlist.artworkUrl}
+                        variant="playlist"
+                        size={128}
                         title={playlist.title}
                         subtitle={playlist.owner}
                         onClick={() => onOpenPlaylist(playlist)}
