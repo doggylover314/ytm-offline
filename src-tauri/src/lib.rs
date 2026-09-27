@@ -3044,14 +3044,87 @@ async fn fetch_audio_bytes(
     Ok(body.to_vec())
 }
 
-/// Where downloaded audio lives. Separate from the metadata cache on purpose: that one is
-/// JSON and size-capped for throwaway data, whereas these files are the user's explicit
+/// The folder created inside a download location the user picks, so the app's files never
+/// mix with theirs. Picking a folder that already has this name uses it as is.
+const OFFLINE_SUBFOLDER_NAME: &str = "YTM Offline";
+const OFFLINE_LOCATION_FILE_NAME: &str = "offline-location-v1.json";
+
+/// `None` until first read from disk; then `Some(None)` for the default location or
+/// `Some(Some(dir))` for one the user chose.
+static OFFLINE_LOCATION: Mutex<Option<Option<PathBuf>>> = Mutex::new(None);
+/// Set while files are being moved to a new location. Writes are refused meanwhile rather
+/// than landing in a directory that is about to be emptied.
+static OFFLINE_MIGRATING: AtomicBool = AtomicBool::new(false);
+
+#[derive(Serialize, Deserialize)]
+struct StoredOfflineLocation {
+    dir: PathBuf,
+}
+
+/// Where downloaded audio lives by default. Separate from the metadata cache on purpose: that
+/// one is JSON and size-capped for throwaway data, whereas these files are the user's explicit
 /// "keep this" and must survive a cache clear.
-fn offline_dir(app: &tauri::AppHandle) -> Result<PathBuf, CommandError> {
+fn default_offline_dir(app: &tauri::AppHandle) -> Result<PathBuf, CommandError> {
     app.path()
         .app_data_dir()
         .map(|path| path.join("offline-audio-v1"))
         .map_err(|error| cache_error(format!("offline directory unavailable: {error}")))
+}
+
+fn offline_location_file(app: &tauri::AppHandle) -> Result<PathBuf, CommandError> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.join(OFFLINE_LOCATION_FILE_NAME))
+        .map_err(|error| cache_error(format!("offline location unavailable: {error}")))
+}
+
+/// The user's chosen download directory, or `None` for the default.
+fn custom_offline_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let mut guard = OFFLINE_LOCATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(loaded) = guard.as_ref() {
+        return loaded.clone();
+    }
+    let loaded = offline_location_file(app)
+        .ok()
+        .and_then(|path| fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice::<StoredOfflineLocation>(&bytes).ok())
+        .map(|stored| stored.dir)
+        .filter(|dir| dir.is_absolute());
+    *guard = Some(loaded.clone());
+    loaded
+}
+
+fn offline_dir(app: &tauri::AppHandle) -> Result<PathBuf, CommandError> {
+    match custom_offline_dir(app) {
+        Some(dir) => Ok(dir),
+        None => default_offline_dir(app),
+    }
+}
+
+/// A chosen folder that has gone missing (an unmounted drive, say) is an error, not an empty
+/// store: reporting it empty would make the frontend drop every download from its manifest.
+fn ensure_custom_offline_dir_available(app: &tauri::AppHandle) -> Result<(), CommandError> {
+    match custom_offline_dir(app) {
+        Some(dir) if !dir.is_dir() => Err(cache_error(format!(
+            "download folder {} is unavailable",
+            dir.display()
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// The directory to write a new download into. The default one is created on demand; a
+/// chosen one is never recreated, because recreating it on an unmounted drive's mount point
+/// would silently fill the system disk instead.
+fn offline_dir_for_write(app: &tauri::AppHandle) -> Result<PathBuf, CommandError> {
+    if OFFLINE_MIGRATING.load(Ordering::SeqCst) {
+        return Err(cache_error("the download folder is being changed"));
+    }
+    ensure_custom_offline_dir_available(app)?;
+    let dir = offline_dir(app)?;
+    fs::create_dir_all(&dir)
+        .map_err(|error| cache_error(format!("offline directory creation failed: {error}")))?;
+    Ok(dir)
 }
 
 /// Track ids come from YouTube and are already filename-safe, but a hostile id must not be
@@ -3087,8 +3160,8 @@ fn offline_artwork_save(
         _ => false,
     };
     if !valid { return Err(cache_error("unsupported artwork format")); }
+    offline_dir_for_write(&app)?;
     let path = offline_artwork_path(&app, &track_id)?;
-    fs::create_dir_all(offline_dir(&app)?).map_err(|error| cache_error(format!("artwork directory failed: {error}")))?;
     let temporary = path.with_extension("cover.part");
     fs::write(&temporary, &bytes).map_err(|error| cache_error(format!("artwork write failed: {error}")))?;
     fs::rename(&temporary, &path).map_err(|error| cache_error(format!("artwork commit failed: {error}")))?;
@@ -3551,11 +3624,8 @@ fn write_offline_entry(
     started_at: Instant,
     ranged: bool,
 ) -> Result<u64, CommandError> {
+    offline_dir_for_write(app)?;
     let path = offline_entry_path(app, track_id)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| cache_error(format!("offline directory creation failed: {error}")))?;
-    }
     let temp_path = path.with_extension("part");
     fs::write(&temp_path, bytes)
         .map_err(|error| cache_error(format!("offline write failed: {error}")))?;
@@ -3619,6 +3689,7 @@ fn offline_audio_remove(app: tauri::AppHandle, track_id: String) -> Result<(), C
 /// metadata, but this is what reconciles it when the two disagree.
 #[tauri::command]
 fn offline_audio_list(app: tauri::AppHandle) -> Result<Vec<OfflineEntryInfo>, CommandError> {
+    ensure_custom_offline_dir_available(&app)?;
     let dir = offline_dir(&app)?;
     if !dir.exists() {
         return Ok(Vec::new());
@@ -3659,6 +3730,7 @@ fn offline_audio_stats(app: tauri::AppHandle) -> Result<OfflineStats, CommandErr
 /// downloaded" -- a blunt but stable ordering.
 #[tauri::command]
 fn offline_audio_prune(app: tauri::AppHandle, max_bytes: u64) -> Result<OfflineStats, CommandError> {
+    ensure_custom_offline_dir_available(&app)?;
     let dir = offline_dir(&app)?;
     if !dir.exists() {
         return Ok(OfflineStats {
@@ -3699,6 +3771,301 @@ fn offline_audio_prune(app: tauri::AppHandle, max_bytes: u64) -> Result<OfflineS
         entry_count,
         used_bytes,
     })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OfflineLocationInfo {
+    path: String,
+    is_default: bool,
+    available: bool,
+}
+
+fn offline_location_info(app: &tauri::AppHandle) -> Result<OfflineLocationInfo, CommandError> {
+    let custom = custom_offline_dir(app);
+    let dir = offline_dir(app)?;
+    Ok(OfflineLocationInfo {
+        path: dir.display().to_string(),
+        is_default: custom.is_none(),
+        // The default directory is created on the first download, so its absence is normal.
+        available: custom.is_none() || dir.is_dir(),
+    })
+}
+
+#[tauri::command]
+fn offline_location_get(app: tauri::AppHandle) -> Result<OfflineLocationInfo, CommandError> {
+    offline_location_info(&app)
+}
+
+/// What happens to existing downloads when the download folder changes.
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum OfflineMigrationMode {
+    /// Move every file, removing the old copies only once all of them made it.
+    Move,
+    /// Copy every file and leave the old folder alone.
+    Copy,
+    /// Delete the old audio; the frontend downloads it again. Covers are kept.
+    Fresh,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OfflineMigrationProgress {
+    done: usize,
+    total: usize,
+}
+
+enum MigratedFile {
+    Renamed { from: PathBuf, to: PathBuf },
+    Copied { from: PathBuf, to: PathBuf },
+}
+
+/// Completed audio and artwork files in `dir`. In-progress `.part` files are not worth moving.
+fn offline_store_files(dir: &Path) -> Result<Vec<PathBuf>, CommandError> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let read_dir = fs::read_dir(dir)
+        .map_err(|error| cache_error(format!("offline listing failed: {error}")))?;
+    let mut files = Vec::new();
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        let is_file = entry.file_type().map(|kind| kind.is_file()).unwrap_or(false);
+        let extension = path.extension().and_then(|value| value.to_str());
+        if is_file && matches!(extension, Some("bin") | Some("cover")) {
+            files.push(path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// Copies through a temporary name and checks the size, so a full disk or a pulled drive can
+/// never leave a truncated file under the real name.
+fn copy_offline_file(from: &Path, to: &Path) -> Result<(), CommandError> {
+    let mut temporary_name = to.file_name().unwrap_or_default().to_os_string();
+    temporary_name.push(".moving");
+    let temporary = to.with_file_name(temporary_name);
+    let result = (|| {
+        fs::copy(from, &temporary)?;
+        File::open(&temporary)?.sync_all()?;
+        if fs::metadata(&temporary)?.len() != fs::metadata(from)?.len() {
+            return Err(std::io::Error::other("copied file size does not match"));
+        }
+        fs::rename(&temporary, to)
+    })();
+    result.map_err(|error| {
+        let _ = fs::remove_file(&temporary);
+        cache_error(format!("copying {} failed: {error}", from.display()))
+    })
+}
+
+fn roll_back_offline_migration(done: &[MigratedFile]) {
+    for file in done.iter().rev() {
+        match file {
+            MigratedFile::Renamed { from, to } => {
+                let _ = fs::rename(to, from);
+            }
+            MigratedFile::Copied { to, .. } => {
+                let _ = fs::remove_file(to);
+            }
+        }
+    }
+}
+
+/// Resolves the folder the user picked to the directory downloads will live in.
+fn resolve_offline_target(folder: &str) -> Result<PathBuf, CommandError> {
+    let picked = PathBuf::from(folder);
+    if !picked.is_absolute() || !picked.is_dir() {
+        return Err(cache_error(format!("{folder} is not a folder")));
+    }
+    if picked.file_name().and_then(|name| name.to_str()) == Some(OFFLINE_SUBFOLDER_NAME) {
+        return Ok(picked);
+    }
+    Ok(picked.join(OFFLINE_SUBFOLDER_NAME))
+}
+
+fn save_offline_location(app: &tauri::AppHandle, dir: Option<&Path>) -> Result<(), CommandError> {
+    let path = offline_location_file(app)?;
+    match dir {
+        Some(dir) => write_json_file(&path, &StoredOfflineLocation { dir: dir.to_path_buf() })?,
+        None if path.exists() => fs::remove_file(&path)
+            .map_err(|error| cache_error(format!("offline location reset failed: {error}")))?,
+        None => {}
+    }
+    *OFFLINE_LOCATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) =
+        Some(dir.map(Path::to_path_buf));
+    Ok(())
+}
+
+fn migrate_offline_location(
+    app: &tauri::AppHandle,
+    folder: Option<String>,
+    mode: OfflineMigrationMode,
+) -> Result<OfflineLocationInfo, CommandError> {
+    let chosen = folder.as_deref().map(resolve_offline_target).transpose()?;
+    let old_dir = offline_dir(app)?;
+    let new_dir = match &chosen {
+        Some(dir) => dir.clone(),
+        None => default_offline_dir(app)?,
+    };
+
+    let new_existed = new_dir.exists();
+    fs::create_dir_all(&new_dir)
+        .map_err(|error| cache_error(format!("could not create {}: {error}", new_dir.display())))?;
+    let remove_new_if_created = || {
+        if !new_existed {
+            let _ = fs::remove_dir(&new_dir);
+        }
+    };
+
+    let old_canonical = fs::canonicalize(&old_dir).unwrap_or_else(|_| old_dir.clone());
+    let new_canonical = fs::canonicalize(&new_dir).unwrap_or_else(|_| new_dir.clone());
+    if old_canonical == new_canonical {
+        save_offline_location(app, chosen.as_deref())?;
+        return offline_location_info(app);
+    }
+    if new_canonical.starts_with(&old_canonical) || old_canonical.starts_with(&new_canonical) {
+        remove_new_if_created();
+        return Err(cache_error(
+            "choose a folder that is not inside the current download folder",
+        ));
+    }
+
+    let probe = new_dir.join(".ytm-offline-write-test");
+    if let Err(error) = fs::write(&probe, b"ok").and_then(|_| fs::remove_file(&probe)) {
+        remove_new_if_created();
+        return Err(cache_error(format!("cannot write to {}: {error}", new_dir.display())));
+    }
+
+    if mode != OfflineMigrationMode::Fresh && custom_offline_dir(app).is_some() && !old_dir.is_dir() {
+        remove_new_if_created();
+        return Err(cache_error(format!(
+            "the current download folder {} is unavailable; reconnect it or start fresh",
+            old_dir.display()
+        )));
+    }
+
+    let files = offline_store_files(&old_dir)?;
+    let done = match transfer_offline_files(&files, &new_dir, mode, |done, total| {
+        let _ = app.emit("offline-location-progress", OfflineMigrationProgress { done, total });
+    }) {
+        Ok(done) => done,
+        Err(error) => {
+            remove_new_if_created();
+            return Err(error);
+        }
+    };
+
+    if let Err(error) = save_offline_location(app, chosen.as_deref()) {
+        roll_back_offline_migration(&done);
+        remove_new_if_created();
+        return Err(error);
+    }
+
+    tidy_old_offline_dir(&old_dir, &files, &done, mode);
+    eprintln!(
+        "[internal][tauri][info] offline location changed files={} to={}",
+        done.len(),
+        new_dir.display()
+    );
+    offline_location_info(app)
+}
+
+/// Moves or copies `files` into `new_dir`. On any failure everything already done is undone,
+/// so the old folder is exactly as it was.
+fn transfer_offline_files(
+    files: &[PathBuf],
+    new_dir: &Path,
+    mode: OfflineMigrationMode,
+    mut on_progress: impl FnMut(usize, usize),
+) -> Result<Vec<MigratedFile>, CommandError> {
+    let to_transfer: Vec<&PathBuf> = files
+        .iter()
+        .filter(|path| {
+            mode != OfflineMigrationMode::Fresh
+                || path.extension().and_then(|value| value.to_str()) == Some("cover")
+        })
+        .collect();
+    let total = to_transfer.len();
+    let mut done: Vec<MigratedFile> = Vec::with_capacity(total);
+    on_progress(0, total);
+
+    for from in to_transfer {
+        let Some(name) = from.file_name() else { continue };
+        let to = new_dir.join(name);
+        let result = if mode == OfflineMigrationMode::Move && fs::rename(from, &to).is_ok() {
+            Ok(MigratedFile::Renamed { from: from.clone(), to })
+        } else {
+            copy_offline_file(from, &to).map(|_| MigratedFile::Copied { from: from.clone(), to })
+        };
+        match result {
+            Ok(file) => done.push(file),
+            Err(error) => {
+                roll_back_offline_migration(&done);
+                return Err(error);
+            }
+        }
+        on_progress(done.len(), total);
+    }
+    Ok(done)
+}
+
+/// Clears the old folder once the new location is committed.
+fn tidy_old_offline_dir(
+    old_dir: &Path,
+    files: &[PathBuf],
+    done: &[MigratedFile],
+    mode: OfflineMigrationMode,
+) {
+    match mode {
+        OfflineMigrationMode::Copy => {}
+        OfflineMigrationMode::Move => {
+            for file in done {
+                if let MigratedFile::Copied { from, .. } = file {
+                    let _ = fs::remove_file(from);
+                }
+            }
+        }
+        OfflineMigrationMode::Fresh => {
+            for path in files {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+    if mode != OfflineMigrationMode::Copy {
+        if let Ok(entries) = fs::read_dir(old_dir) {
+            for entry in entries.flatten() {
+                if entry.path().extension().and_then(|value| value.to_str()) == Some("part") {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+        // Only succeeds when empty, so nothing the app does not own is ever removed.
+        let _ = fs::remove_dir(old_dir);
+    }
+}
+
+/// Changes where downloads are stored. `folder` is the folder the user picked (a
+/// "YTM Offline" subfolder is made inside it); `None` returns to the default location.
+#[tauri::command]
+async fn offline_location_set(
+    app: tauri::AppHandle,
+    folder: Option<String>,
+    mode: OfflineMigrationMode,
+) -> Result<OfflineLocationInfo, CommandError> {
+    if OFFLINE_MIGRATING.swap(true, Ordering::SeqCst) {
+        return Err(cache_error("the download folder is already being changed"));
+    }
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        migrate_offline_location(&app, folder, mode)
+    })
+    .await
+    .map_err(|error| cache_error(format!("download folder change failed: {error}")))
+    .and_then(|result| result);
+    OFFLINE_MIGRATING.store(false, Ordering::SeqCst);
+    result
 }
 
 #[tauri::command]
@@ -5363,6 +5730,8 @@ pub fn run() {
             offline_audio_list,
             offline_audio_stats,
             offline_audio_prune,
+            offline_location_get,
+            offline_location_set,
             fetch_youtube_music_audio,
             native_audio_load,
             native_audio_play,
@@ -6109,5 +6478,130 @@ mod tests {
         assert!(error_page.contains("text=\"{\\\"error\\\":\\\"forbidden\\\"}\""));
 
         assert_eq!(bytes_preview(&[]), "0 bytes, starts hex= text=\"\"");
+    }
+}
+
+#[cfg(test)]
+mod offline_location_tests {
+    use super::{
+        offline_store_files, resolve_offline_target, roll_back_offline_migration,
+        tidy_old_offline_dir, transfer_offline_files, OfflineMigrationMode,
+        OFFLINE_SUBFOLDER_NAME,
+    };
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+
+    /// `CommandError` has no `Debug`, so `unwrap` is unavailable; fail with its message instead.
+    fn ok<T>(result: Result<T, super::CommandError>) -> T {
+        result.unwrap_or_else(|error| panic!("{}", error.message))
+    }
+
+    /// A fresh old/new directory pair holding two tracks, a cover and a half-written download.
+    fn fixture() -> (PathBuf, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "ytm-offline-location-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        ));
+        let old_dir = root.join("old");
+        let new_dir = root.join("new");
+        fs::create_dir_all(&old_dir).unwrap();
+        fs::create_dir_all(&new_dir).unwrap();
+        fs::write(old_dir.join("a.bin"), b"audio-a").unwrap();
+        fs::write(old_dir.join("a.cover"), b"cover-a").unwrap();
+        fs::write(old_dir.join("b.bin"), b"audio-bb").unwrap();
+        fs::write(old_dir.join("c.part"), b"half").unwrap();
+        (root, old_dir, new_dir)
+    }
+
+    fn names(dir: &PathBuf) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+
+    fn run(mode: OfflineMigrationMode) -> (PathBuf, PathBuf, PathBuf, Vec<(usize, usize)>) {
+        let (root, old_dir, new_dir) = fixture();
+        let files = ok(offline_store_files(&old_dir));
+        let mut progress = Vec::new();
+        let done = ok(transfer_offline_files(&files, &new_dir, mode, |done, total| {
+            progress.push((done, total))
+        }));
+        tidy_old_offline_dir(&old_dir, &files, &done, mode);
+        (root, old_dir, new_dir, progress)
+    }
+
+    #[test]
+    fn move_leaves_nothing_behind() {
+        let (root, old_dir, new_dir, progress) = run(OfflineMigrationMode::Move);
+        assert_eq!(names(&new_dir), ["a.bin", "a.cover", "b.bin"]);
+        assert!(!old_dir.exists(), "emptied old folder should be removed");
+        assert_eq!(fs::read(new_dir.join("b.bin")).unwrap(), b"audio-bb");
+        assert_eq!(progress.last(), Some(&(3, 3)));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn copy_keeps_the_old_folder() {
+        let (root, old_dir, new_dir, _) = run(OfflineMigrationMode::Copy);
+        assert_eq!(names(&new_dir), ["a.bin", "a.cover", "b.bin"]);
+        assert_eq!(names(&old_dir), ["a.bin", "a.cover", "b.bin", "c.part"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn fresh_keeps_only_covers() {
+        let (root, old_dir, new_dir, progress) = run(OfflineMigrationMode::Fresh);
+        assert_eq!(names(&new_dir), ["a.cover"]);
+        assert!(!old_dir.exists());
+        assert_eq!(progress.last(), Some(&(1, 1)));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rollback_restores_the_old_folder() {
+        let (root, old_dir, new_dir) = fixture();
+        let files = ok(offline_store_files(&old_dir));
+        let done = ok(transfer_offline_files(&files, &new_dir, OfflineMigrationMode::Move, |_, _| {}));
+        roll_back_offline_migration(&done);
+        assert_eq!(names(&old_dir), ["a.bin", "a.cover", "b.bin", "c.part"]);
+        assert!(names(&new_dir).is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_transfer_undoes_itself() {
+        let (root, old_dir, new_dir) = fixture();
+        let mut files = ok(offline_store_files(&old_dir));
+        files.push(old_dir.join("missing.bin"));
+        let result = transfer_offline_files(&files, &new_dir, OfflineMigrationMode::Copy, |_, _| {});
+        assert!(result.is_err());
+        assert!(names(&new_dir).is_empty(), "partial copies must be removed");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn picked_folder_gets_a_subfolder_once() {
+        let (root, old_dir, _) = fixture();
+        let picked = ok(resolve_offline_target(old_dir.to_str().unwrap()));
+        assert_eq!(picked, old_dir.join(OFFLINE_SUBFOLDER_NAME));
+
+        let existing = root.join(OFFLINE_SUBFOLDER_NAME);
+        fs::create_dir_all(&existing).unwrap();
+        assert_eq!(ok(resolve_offline_target(existing.to_str().unwrap())), existing);
+
+        assert!(resolve_offline_target("relative/path").is_err());
+        assert!(resolve_offline_target(root.join("nope").to_str().unwrap()).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 }

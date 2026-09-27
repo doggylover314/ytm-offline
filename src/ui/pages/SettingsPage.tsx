@@ -96,6 +96,7 @@ import {
 } from "../settings/renderEffects";
 import { setMadeForYouVisible, useMadeForYouVisible } from "../settings/homeSections";
 import { GoogleSignInButton } from "../components/GoogleSignInButton";
+import { DownloadLocationSetting } from "../components/DownloadLocationSetting";
 import { ExternalLinkButton } from "../components/ExternalLinkButton";
 import {
   AUTO_LYRICS_SOURCE,
@@ -1554,6 +1555,8 @@ export function SettingsPage({
                 </button>
               </div>
             </div>
+
+            <DownloadLocationSetting hasDownloads={Object.keys(offlineState.entries).length > 0} />
 
           </section>
 

@@ -30,11 +30,11 @@ The packages are written under `src-tauri/target/release/bundle/`. AppImage crea
 
 ## How downloads are stored
 
-Downloaded audio is app managed and retains the source format. A durable manifest stores the title, artists, album, duration, source identifiers, playlist references, and any available lyrics. Cover artwork is stored beside the audio. The app keeps a track while any synced playlist or individual save references it. Audio is not encrypted; Google session credentials are kept separately in the OS credential store.
+Downloaded audio is app managed and retains the source format. By default it lives in the app's data directory; Settings → Storage lets you pick another folder, and the app keeps its files in a `YTM Offline` subfolder there. When you change the folder you choose whether existing downloads are moved (the default), copied, or deleted and downloaded again. A durable manifest stores the title, artists, album, duration, source identifiers, playlist references, and any available lyrics. Cover artwork is stored beside the audio. The app keeps a track while any synced playlist or individual save references it. Audio is not encrypted; Google session credentials are kept separately in the OS credential store.
 
 Playlist synchronization requires a network connection. When a sync fails, the previously downloaded tracks remain available. YouTube Music can change its private API, so an update may be needed if sign-in, stream resolution, or playlist fetching changes.
 
-Discord Rich Presence needs an application ID belonging to this fork. Set `YTM_OFFLINE_DISCORD_CLIENT_ID` when building (the release workflow reads it from the repository variable of the same name) and it is compiled into the app. Setting the same variable at launch overrides the built-in ID. The upstream application's ID was removed so presence cannot display upstream branding. Last.fm remains configured in Settings. Last.fm remains configured in Settings.
+Discord Rich Presence needs an application ID belonging to this fork. Set `YTM_OFFLINE_DISCORD_CLIENT_ID` when building (the release workflow reads it from the repository variable of the same name) and it is compiled into the app. Setting the same variable at launch overrides the built-in ID. The upstream application's ID was removed so presence cannot display upstream branding. Last.fm remains configured in Settings.
 
 ## Credits and license
 

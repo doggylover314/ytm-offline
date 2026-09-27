@@ -10,6 +10,11 @@ import { getDownloadQuality, type AudioQuality } from "../internal/audioQuality"
 
 const MANIFEST_KEY = "ytm-offline.offline-manifest.v1";
 const MAX_BYTES_KEY = "ytm-offline.offline-max-bytes.v1";
+/**
+ * Entries whose audio was deleted by a "start fresh" folder change and still has to be
+ * downloaded again. Durable, so quitting before the queue drains does not lose the songs.
+ */
+const REDOWNLOAD_KEY = "ytm-offline.offline-redownload.v1";
 export const OFFLINE_ARTWORK_PREFIX = "ytm-offline-artwork:";
 
 /** Synced playlists are never evicted by an arbitrary default disk quota. */
@@ -67,6 +72,9 @@ let state: OfflineState = {
 };
 let hydrated = false;
 let pumping = false;
+/** Set while the download folder is changing; the worker stops between downloads. */
+let paused = false;
+let idleWaiters: Array<() => void> = [];
 
 function emit(): void {
   for (const listener of listeners) listener();
@@ -108,6 +116,32 @@ function writeManifest(entries: Record<string, OfflineEntry>): void {
     });
   }
   void setAppSetting(MANIFEST_KEY, entries);
+}
+
+function readRedownloads(): Record<string, OfflineEntry> {
+  try {
+    return asManifest(JSON.parse(localStorage.getItem(REDOWNLOAD_KEY) ?? "{}")) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+let redownloads: Record<string, OfflineEntry> = readRedownloads();
+
+function writeRedownloads(next: Record<string, OfflineEntry>): void {
+  redownloads = next;
+  try {
+    localStorage.setItem(REDOWNLOAD_KEY, JSON.stringify(next));
+  } catch {
+    // The durable copy below is the one that matters.
+  }
+  void setAppSetting(REDOWNLOAD_KEY, next);
+}
+
+function forgetRedownload(trackId: string): void {
+  if (!redownloads[trackId]) return;
+  const { [trackId]: _done, ...rest } = redownloads;
+  writeRedownloads(rest);
 }
 
 function setState(next: Partial<OfflineState>): void {
@@ -185,6 +219,14 @@ export async function hydrateOfflineStore(): Promise<void> {
 
     commitEntries(entries);
     logInternalInfo("offlineStore.hydrate", { count: Object.keys(entries).length });
+
+    const durableRedownloads = asManifest(await getAppSetting<unknown>(REDOWNLOAD_KEY)) ?? {};
+    const pendingRedownloads = { ...durableRedownloads, ...redownloads };
+    for (const trackId of Object.keys(pendingRedownloads)) {
+      if (entries[trackId]) delete pendingRedownloads[trackId];
+    }
+    writeRedownloads(pendingRedownloads);
+    for (const entry of Object.values(pendingRedownloads)) requeueEntry(entry);
   } catch (error) {
     logInternalWarn("offlineStore.hydrate failed", {
       error: error instanceof Error ? error.message : String(error),
@@ -300,6 +342,7 @@ export function queuePlaylistDownloads(playlistId: string, tracks: Track[]): voi
 }
 
 export function cancelDownload(trackId: string): void {
+  forgetRedownload(trackId);
   pendingTracks.delete(trackId);
   pendingOwners.delete(trackId);
   const { [trackId]: _dropped, ...pending } = state.pending;
@@ -351,6 +394,7 @@ export async function removeAllDownloads(): Promise<void> {
   setState({ queued: [], pending: {}, failed: {} });
   pendingTracks.clear();
   pendingOwners.clear();
+  writeRedownloads({});
   for (const trackId of ids) {
     await invoke("offline_audio_remove", { trackId }).catch(() => {});
   }
@@ -360,6 +404,22 @@ export async function removeAllDownloads(): Promise<void> {
 /** Track objects for queued ids, so the worker has metadata without re-fetching. */
 const pendingTracks = new Map<string, Track>();
 const pendingOwners = new Map<string, { manual: boolean; playlists: Set<string> }>();
+
+/** Queues a known entry again with the same owners it had, for a "start fresh" re-download. */
+function requeueEntry(entry: OfflineEntry): void {
+  const trackId = entry.track.id;
+  pendingOwners.set(trackId, {
+    manual: entry.savedIndividually !== false,
+    playlists: new Set(entry.playlistIds ?? []),
+  });
+  pendingTracks.set(trackId, entry.track);
+  if (state.queued.includes(trackId) || state.downloadingId === trackId) return;
+  setState({
+    queued: [...state.queued, trackId],
+    pending: { ...state.pending, [trackId]: entry.track },
+  });
+  void pump();
+}
 
 async function pump(): Promise<void> {
   /*
@@ -375,7 +435,7 @@ async function pump(): Promise<void> {
     setState({ downloadingId: null, progress: null });
   }
 
-  if (pumping || state.downloadingId !== null) return;
+  if (paused || pumping || state.downloadingId !== null) return;
   if (state.queued.length === 0) return;
   if (!resolveStreamUrl) {
     logInternalWarn("offlineStore.pump has no stream resolver");
@@ -384,7 +444,7 @@ async function pump(): Promise<void> {
 
   pumping = true;
   try {
-    while (state.queued.length > 0) {
+    while (state.queued.length > 0 && !paused) {
       const [trackId, ...rest] = state.queued;
       const track = pendingTracks.get(trackId);
       setState({ queued: rest, downloadingId: trackId, progress: null });
@@ -399,8 +459,11 @@ async function pump(): Promise<void> {
         const { url, mimeType, cookie } = await resolveStreamUrl(track, getDownloadQuality());
         const byteLength = await invoke<number>("offline_audio_save", { url, trackId, cookie });
         logInternalInfo("offlineStore.download complete", { trackId, byteLength });
+        // A re-download after a "start fresh" folder change kept its cover on disk.
         const [artwork, lyrics] = await Promise.allSettled([
-          saveArtwork(track),
+          track.artworkUrl?.startsWith(OFFLINE_ARTWORK_PREFIX)
+            ? Promise.resolve(track.artworkUrl)
+            : saveArtwork(track),
           resolveLyrics?.(track) ?? Promise.resolve(undefined),
         ]);
         pendingTracks.delete(trackId);
@@ -421,12 +484,15 @@ async function pump(): Promise<void> {
               byteLength, downloadedAt: Date.now(),
               savedIndividually: owners.manual,
               playlistIds: [...owners.playlists],
-              lyrics: lyrics.status === "fulfilled" ? lyrics.value : undefined,
+              lyrics: lyrics.status === "fulfilled" && lyrics.value
+                ? lyrics.value
+                : redownloads[trackId]?.lyrics,
             },
           });
         } else {
           await invoke("offline_audio_remove", { trackId });
         }
+        forgetRedownload(trackId);
         setState({ downloadingId: null, progress: null });
         await prune();
       } catch (error) {
@@ -445,6 +511,9 @@ async function pump(): Promise<void> {
     }
   } finally {
     pumping = false;
+    const waiters = idleWaiters;
+    idleWaiters = [];
+    for (const resolve of waiters) resolve();
     // DOWNLOAD_CONCURRENCY is 1 today; kept explicit so raising it is a one-line change.
     if (DOWNLOAD_CONCURRENCY > 1 && state.queued.length > 0) void pump();
   }
@@ -469,6 +538,57 @@ async function prune(): Promise<void> {
     logInternalWarn("offlineStore.prune failed", {
       error: error instanceof Error ? error.message : String(error),
     });
+  }
+}
+
+export type OfflineMigrationMode = "move" | "copy" | "fresh";
+
+export interface OfflineLocation {
+  /** The full directory downloads live in, including the "YTM Offline" subfolder. */
+  path: string;
+  isDefault: boolean;
+  /** False when a chosen folder is missing, such as an unplugged drive. */
+  available: boolean;
+}
+
+export function getOfflineLocation(): Promise<OfflineLocation> {
+  return invoke<OfflineLocation>("offline_location_get");
+}
+
+/**
+ * Moves the download store to `folder` (a "YTM Offline" subfolder is made inside it), or back
+ * to the default location when `folder` is null.
+ *
+ * Downloads pause first and the current one is allowed to finish, so no file is written into
+ * a folder that is being emptied. "fresh" deletes the old audio and queues every song again.
+ */
+export async function changeOfflineLocation(
+  folder: string | null,
+  mode: OfflineMigrationMode,
+  onProgress?: (done: number, total: number) => void,
+): Promise<OfflineLocation> {
+  paused = true;
+  const unlisten = await listen<{ done: number; total: number }>(
+    "offline-location-progress",
+    (event) => onProgress?.(event.payload.done, event.payload.total),
+  );
+  try {
+    if (pumping) await new Promise<void>((resolve) => idleWaiters.push(resolve));
+    const location = await invoke<OfflineLocation>("offline_location_set", { folder, mode });
+    logInternalInfo("offlineStore.location changed", { mode, isDefault: location.isDefault });
+
+    if (mode === "fresh") {
+      const previous = state.entries;
+      writeRedownloads({ ...redownloads, ...previous });
+      commitEntries({});
+      paused = false;
+      for (const entry of Object.values(previous)) requeueEntry(entry);
+    }
+    return location;
+  } finally {
+    unlisten();
+    paused = false;
+    void pump();
   }
 }
 
