@@ -5,7 +5,7 @@
  * only ever ran when someone remembered to paste it — fifteen files of real assertions that
  * nothing executed. This is the thing that executes them.
  *
- *   npm run check
+ *   pnpm run check
  *
  * Bundling goes through esbuild's JS API rather than the `esbuild` binary: on Windows that
  * binary is reached through a `.cmd` shim, and Node refuses to spawn one without a shell
@@ -39,7 +39,7 @@ if (checks.length === 0) {
   process.exit(1);
 }
 
-const outDir = mkdtempSync(join(tmpdir(), "zuno-checks-"));
+const outDir = mkdtempSync(join(tmpdir(), "ytm-offline-checks-"));
 const failures = [];
 
 try {

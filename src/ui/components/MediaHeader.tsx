@@ -1,7 +1,7 @@
 import { useEffect, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Tooltip } from "@/components/motion/tooltip";
-import { CheckIcon, DownloadIcon, ListIcon, PauseActiveIcon, PlayActiveIcon, PlaylistAddIcon, RepeatActiveIcon, RepeatOneActiveIcon, ShuffleActiveIcon } from "@/ui/icons";
+import { DownloadActiveIcon, DownloadIcon, ListIcon, PauseActiveIcon, PlayActiveIcon, PlaylistAddIcon, RepeatActiveIcon, RepeatOneActiveIcon, ShuffleActiveIcon, ShuffleIcon } from "@/ui/icons";
 import { SpinnerSteps } from "@/components/motion/loader";
 import { TrackArtwork } from "./TrackArtwork";
 import { setAmbientArtwork } from "../stores/ambientArtworkStore";
@@ -67,6 +67,7 @@ interface MediaHeaderProps {
     isLoading?: boolean;
   };
   onShuffle?: () => void;
+  shuffleEnabled?: boolean;
   /** Queues every track in this collection behind what is already hand-picked. */
   onAddToQueue?: () => void;
   /** Adds every track in this collection to a playlist, via the usual picker. */
@@ -75,6 +76,8 @@ interface MediaHeaderProps {
   download?: {
     /** Queues every not-yet-downloaded track in this collection for offline use. */
     onStart: () => void;
+    onStop?: () => void;
+    isSynced?: boolean;
     /**
      * The collection is still being paged in before the download can start.
      *
@@ -132,6 +135,7 @@ export function MediaHeader({
   circularArtwork = false,
   playback,
   onShuffle,
+  shuffleEnabled = false,
   onAddToQueue,
   onAddToPlaylist,
   download,
@@ -224,10 +228,12 @@ export function MediaHeader({
               type="button"
               disabled={actionsDisabled}
               onClick={onShuffle}
-              className="flex items-center gap-2 rounded-full bg-card px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-pressed={shuffleEnabled}
+              aria-label={shuffleEnabled ? "Turn off shuffle" : "Turn on shuffle"}
+              title={shuffleEnabled ? "Shuffle on" : "Shuffle off"}
+              className={cn("flex size-11 items-center justify-center rounded-full transition-colors disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", shuffleEnabled ? "bg-muted text-primary" : "bg-card text-muted-foreground hover:text-foreground")}
             >
-              <ShuffleActiveIcon size={18} aria-hidden="true" />
-              Shuffle
+              {shuffleEnabled ? <ShuffleActiveIcon size={20} aria-hidden="true" /> : <ShuffleIcon size={20} aria-hidden="true" />}
             </button>
           ) : null}
 
@@ -301,7 +307,9 @@ export function MediaHeader({
             return (
               <Tooltip
                 content={
-                  allDownloaded
+                  download.isSynced
+                    ? "Stop syncing this playlist"
+                    : allDownloaded
                     ? "Every song here is downloaded"
                     : downloadCounts?.isPartial
                       ? "Download every song here for offline"
@@ -312,16 +320,16 @@ export function MediaHeader({
               >
                 <button
                   type="button"
-                  disabled={actionsDisabled || allDownloaded || downloadBusy}
-                  onClick={download.onStart}
+                  disabled={actionsDisabled || (allDownloaded && !download.onStop) || downloadBusy}
+                  onClick={download.isSynced ? download.onStop : download.onStart}
                   aria-busy={downloadBusy}
-                  aria-label={allDownloaded ? "Already downloaded" : "Download for offline"}
+                  aria-label={download.isSynced ? "Stop syncing playlist" : download.onStop ? "Download and sync playlist" : allDownloaded ? "Already downloaded" : "Download for offline"}
                   className="relative flex size-11 items-center justify-center rounded-full bg-card text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {downloadBusy ? (
                     <SpinnerSteps size={18} color="currentColor" />
-                  ) : allDownloaded ? (
-                    <CheckIcon size={18} aria-hidden="true" className="text-primary" />
+                  ) : download.isSynced || allDownloaded ? (
+                    <DownloadActiveIcon size={18} aria-hidden="true" className="text-primary" />
                   ) : (
                     <DownloadIcon size={18} aria-hidden="true" />
                   )}

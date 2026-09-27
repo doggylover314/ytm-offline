@@ -26,6 +26,7 @@ import { saveMiniPlayerPosition, useMiniPlayerHoverAction } from "../../settings
 import { isLinux, isMacOS, isWindows } from "../../platform";
 import { Marquee } from "@/components/motion/marquee";
 import { TrackArtwork } from "../TrackArtwork";
+import { OverflowScrollText } from "../player/OverflowScrollText";
 
 interface PlayerSync {
   status: string;
@@ -94,7 +95,7 @@ const LEFT_MOUSE_BUTTON = 0;
 const INTERACTIVE_SELECTOR = "button, input, a, [role='button']";
 
 const MINI_BUTTON =
-  "flex size-7 shrink-0 items-center justify-center rounded-full text-neutral-300 transition-all hover:bg-white/10 hover:text-white active:scale-90 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50";
+  "flex size-7 shrink-0 items-center justify-center rounded-full text-neutral-300 transition-colors hover:bg-neutral-700 hover:text-white disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary";
 
 export default function MiniPlayer() {
   const [playerState, setPlayerState] = useState<PlayerSync>({
@@ -905,10 +906,9 @@ export default function MiniPlayer() {
         ref={capsuleRef}
         className={cn(
           "relative flex flex-col overflow-hidden",
-          "bg-neutral-900/80 backdrop-blur-xl",
-          "ring-1 ring-white/10 transition-[height,width,padding,background-color] duration-100",
+          "bg-neutral-900",
+          "transition-[height,width,padding] duration-100",
           "[transition-timing-function:cubic-bezier(0.32,0.72,0,1)]",
-          expanded ? "bg-neutral-900/95 ring-white/15" : "",
           isDragging ? "cursor-grabbing" : "cursor-grab",
         )}
         style={{
@@ -925,27 +925,6 @@ export default function MiniPlayer() {
         }}
         onContextMenu={(event) => event.preventDefault()}
       >
-        {/*
-          Album-reactive backdrop: the artwork itself, blown up and blurred past recognition,
-          tints the glass with the record's own palette. It costs no extra network request
-          (the same URL the artwork element loads) and no colour extraction, yet the capsule
-          takes on a different mood per track — which is the thing a flat neutral pill can
-          never do. Deliberately weak so white text keeps its contrast.
-        */}
-        {artworkUrl ? (
-          <span
-            key={artworkUrl}
-            className="pointer-events-none absolute inset-0 -z-10 scale-150 bg-cover bg-center opacity-30 blur-2xl"
-            style={{ backgroundImage: `url("${artworkUrl}")` }}
-            aria-hidden="true"
-          />
-        ) : null}
-
-        {/* Specular top edge — the highlight a real glass material catches. */}
-        <span
-          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-white/25 to-transparent"
-          aria-hidden="true"
-        />
 
         {/* ── Identity row: always visible ─────────────────────────────── */}
         <div
@@ -1029,11 +1008,7 @@ export default function MiniPlayer() {
                 </Marquee>
               )}
             </div>
-            {playerState.artist ? (
-              <p className="truncate text-[10px] leading-tight text-white/55">
-                {playerState.artist}
-              </p>
-            ) : null}
+            {playerState.artist ? <OverflowScrollText text={playerState.artist} className="text-[10px] font-normal leading-tight text-neutral-400" /> : null}
           </div>
 
           <button

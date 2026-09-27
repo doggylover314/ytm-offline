@@ -46,7 +46,6 @@ import { TitleBar } from "./components/TitleBar";
 import { PlayerBar } from "./components/player/PlayerBar";
 import { QueuePanel } from "./components/player/QueuePanel";
 import { useQueuePanelCollapsed } from "./settings/queuePanel";
-import { useNativeWindowControls } from "./settings/windowControls";
 
 /** Wide enough for a 44px cover plus breathing room, matching the sidebar rail's feel. */
 const COLLAPSED_QUEUE_WIDTH = 62;
@@ -65,6 +64,7 @@ import {
 import { clearAppSession, loadAppSession, saveAppSession } from "../player/appSession";
 import { useMediaSession } from "../player/useMediaSession";
 import { LastFmService } from "../player/LastFm";
+import { syncAllPlaylists } from "../player/playlistSync";
 import { playerUIStore, usePlayerUIState } from "./stores/playerUIStore";
 import { AppLoadingScreen } from "./components/AppLoadingScreen";
 import { AuthOverlay } from "./components/AuthOverlay";
@@ -376,7 +376,6 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(62);
   const [queuePanelWidth, setQueuePanelWidth] = useState(340);
   const isQueuePanelCollapsed = useQueuePanelCollapsed();
-  const nativeWindowControls = useNativeWindowControls();
   const [loadingScreenState, setLoadingScreenState] = useState<"visible" | "leaving" | "hidden">("visible");
   const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(() =>
     readLocalOnboardingComplete() ? true : null
@@ -684,6 +683,20 @@ export default function App() {
       view: "home",
     });
   };
+
+  useEffect(() => {
+    if (libraryState.status !== "ready") return;
+    const sync = () => { if (navigator.onLine) void syncAllPlaylists(libraryController); };
+    sync();
+    const timer = window.setInterval(sync, 5 * 60 * 1000);
+    window.addEventListener("focus", sync);
+    window.addEventListener("online", sync);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", sync);
+      window.removeEventListener("online", sync);
+    };
+  }, [libraryState.status]);
 
   useEffect(() => {
     if (showKeychainNotice) return;
@@ -1035,8 +1048,6 @@ export default function App() {
     }
   };
 
-  const handleCreateTab = () => createTab();
-
   const handleSignIn = async () => {
     await libraryController.signIn();
     if (libraryController.getState().status !== "ready") return;
@@ -1116,7 +1127,7 @@ export default function App() {
 
     if (looksLikeYouTubeLink(query)) {
       void handleOpenLink(query, openInNewTab).then((opened) => {
-        // Not a link Zuno can open after all — fall back to searching for the text, so a
+        // Not a link the app can open after all — fall back to searching for the text, so a
         // paste that resolves to nothing still does something.
         if (!opened) runSearch(query, openInNewTab);
       });
@@ -1487,28 +1498,6 @@ export default function App() {
   const handleKeychainNoticeContinue = () => {
     localStorage.setItem(KEYCHAIN_NOTICE_COMPLETE_KEY, "true");
     setShowKeychainNotice(false);
-  };
-
-  const handleReorderTab = (
-    draggedTabId: string,
-    targetTabId: string,
-    insertAfter: boolean,
-  ) => {
-    setTabs((currentTabs) => {
-      const draggedIndex = currentTabs.findIndex((tab) => tab.id === draggedTabId);
-      const targetIndex = currentTabs.findIndex((tab) => tab.id === targetTabId);
-      if (draggedIndex < 0 || targetIndex < 0 || draggedIndex === targetIndex) {
-        return currentTabs;
-      }
-
-      const nextTabs = [...currentTabs];
-      const [draggedTab] = nextTabs.splice(draggedIndex, 1);
-      const adjustedTargetIndex = nextTabs.findIndex((tab) => tab.id === targetTabId);
-      nextTabs.splice(adjustedTargetIndex + (insertAfter ? 1 : 0), 0, draggedTab);
-      return nextTabs;
-    });
-    // Persist immediately so tab order survives app restart
-    window.setTimeout(persistAppSession, 0);
   };
 
   useEffect(() => {
@@ -1976,47 +1965,19 @@ useEffect(() => {
       onOpenAlbum={(track) => void handleNavigateAlbumForTrack(track)}
     >
     <PlaylistContextMenuProvider libraryController={libraryController}>
-    {/*
-      `ring-inset` is load-bearing: the window is transparent, so an outward ring would be
-      drawn into nothing and clipped. The specular line along the top edge is the same cue
-      the picks cards and the mini player use, which is what makes the whole app read as one
-      material rather than three separately-styled surfaces.
-
-      Both drop out under OS native decorations: the WM already draws a real frame above the
-      webview there, so this edge would just be a stray line under the OS title bar.
-    */}
-    <div
-      className={`relative flex h-screen flex-col overflow-hidden rounded-[var(--window-radius)] ${
-        nativeWindowControls ? "" : "border border-border ring-1 ring-inset ring-[var(--window-edge)]"
-      }`}
-    >
- {/*    {!paperPcMode && <StarField />}
-    <span
-      className="pointer-events-none absolute inset-x-0 top-0 z-50 h-px bg-linear-to-r from-transparent via-[var(--window-edge-highlight)] to-transparent"
-      aria-hidden="true"
-    /> */}
+    <div className="relative flex h-screen flex-col overflow-hidden rounded-[var(--window-radius)] bg-background">
       {/* Dropped entirely in full-screen lyrics, not just visually hidden: the window is
           real OS fullscreen at that point, so there is no frame left to drag or minimize. */}
       {!playerUIState.isLyricsFullscreen && (
       <TitleBar
-        tabs={tabs}
-        activeTabId={activeTabId}
-        playingTabId={
-          playerState.status === "playing"
-            ? tabManager.getActivePlayerId()
-            : null
-        }
-        nonClosableTabId={tabs.find((tab) => tabManager.isOnlyTab(tab.id))?.id ?? null}
-        sidebarWidth={sidebarWidth}
         isHomeActive={activeTab?.view === "home"}
+        isLibraryActive={["library", "playlist", "album", "artist"].includes(activeTab?.view ?? "")}
+        isDownloadsActive={activeTab?.view === "browse" && activeTab.browseTab === "downloads"}
+        isSettingsActive={activeTab?.view === "settings"}
         onNavigateHome={handleNavigateHome}
-        onCreateTab={handleCreateTab}
-        onCloseTab={handleCloseTab}
-        onSwitchTab={handleSwitchTab}
-        onReorderTab={handleReorderTab}
+        onOpenLibrary={handleOpenLibrary}
         onOpenSettings={handleOpenSettings}
         onOpenDownloads={() => handleOpenBrowse("downloads")}
-        onboardingFirstTabId={onboardingStep ? onboardingFirstTabId : undefined}
       />
       )}
 
@@ -2027,14 +1988,14 @@ useEffect(() => {
           onSidebarWidthChange={setSidebarWidth}
           onNavigateAlbum={handleNavigateAlbum}
           onNavigatePlaylist={handleNavigatePlaylist}
-          showSearchBar={activeTab?.view !== "settings" && !playerUIState.isLyricsOpen}
+          showSearchBar={activeTab?.view === "home" && !playerUIState.isLyricsOpen}
           onOpenSearch={() => setIsSearchOpen(true)}
           canGoBack={canNavigateBack}
           canGoForward={canNavigateForward}
           onNavigateBack={handleNavigateBack}
           onNavigateForward={handleNavigateForward}
           fullBleedContent={playerUIState.isLyricsOpen}
-          hideSidebar={playerUIState.isLyricsFullscreen}
+          hideSidebar
           showTransientScrollbar={
             !playerUIState.isLyricsOpen
             && (activeTab?.view === "playlist" || activeTab?.view === "album")

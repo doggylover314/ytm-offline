@@ -52,71 +52,10 @@ mod equalizer;
 mod opus_source;
 mod lastfm;
 
-// Keep the legacy service name so existing sign-in credentials survive the product rename.
-const KEYRING_SERVICE: &str = "com.ytmusicdock.app";
+const KEYRING_SERVICE: &str = "io.github.doggylover314.ytmoffline";
 
-/// Durable settings store. Also the marker the app-data migration checks for.
+/// Durable settings store.
 const APP_SETTINGS_FILE_NAME: &str = "settings-v1.json";
-
-/// Copies the pre-rename app-data directory into the current one, once.
-///
-/// Runs on every start but does nothing after the first: the presence of a settings file in
-/// the new location is the "already migrated" marker. Deliberately a copy rather than a
-/// move, so a half-finished run cannot destroy the only copy of the user's settings — the
-/// old directory is left untouched for them to delete when they are satisfied.
-///
-/// Only the roaming data directory is migrated. Caches, logs and the webview profile live in
-/// the local data directory and all regenerate on their own; copying them would mean moving
-/// hundreds of megabytes to no benefit.
-fn migrate_legacy_app_data(app: &tauri::AppHandle) {
-    let Ok(new_dir) = app.path().app_data_dir() else {
-        return;
-    };
-    // Marker: anything already written here means this ran before, or the user is new.
-    if new_dir.join(APP_SETTINGS_FILE_NAME).exists() {
-        return;
-    }
-    let Some(base) = new_dir.parent() else {
-        return;
-    };
-    let legacy_dir = base.join(LEGACY_BUNDLE_IDENTIFIER);
-    if !legacy_dir.is_dir() || legacy_dir == new_dir {
-        return;
-    }
-
-    if let Err(error) = copy_dir_contents(&legacy_dir, &new_dir) {
-        eprintln!("[internal][tauri][warn] legacy app data migration failed: {error}");
-        return;
-    }
-    eprintln!(
-        "[internal][tauri][info] migrated app data from {}",
-        legacy_dir.display()
-    );
-}
-
-fn copy_dir_contents(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(to)?;
-    for entry in std::fs::read_dir(from)? {
-        let entry = entry?;
-        let target = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir_contents(&entry.path(), &target)?;
-        } else {
-            std::fs::copy(entry.path(), &target)?;
-        }
-    }
-    Ok(())
-}
-
-/// Bundle identifier used before the rename to Zuno.
-///
-/// Tauri derives the app-data directory from the identifier, so changing it points the app
-/// at an empty folder and strands every stored preference — including user-created local
-/// playlists. `migrate_legacy_app_data` copies the old directory across once.
-///
-/// Sign-in credentials are unaffected: they live in the OS keyring under `KEYRING_SERVICE`,
-/// which is deliberately decoupled from the identifier.
-const LEGACY_BUNDLE_IDENTIFIER: &str = "com.justanothermusicclient.desktop";
 const KEYRING_USER: &str = "youtube-oauth";
 const YOUTUBE_COOKIE_KEYRING_USER: &str = "youtube-music-cookie";
 /// Slot id for the one account that existed before multi-account support.
@@ -1634,15 +1573,15 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     use tauri::menu::{Menu, MenuItem};
     use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 
-    let show = MenuItem::with_id(app, "tray-show", "Show Zuno", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "tray-quit", "Quit Zuno", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "tray-show", "Show YTM Offline", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "tray-quit", "Quit YTM Offline", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
 
     TrayIconBuilder::with_id("main-tray")
         .icon(app.default_window_icon().cloned().ok_or_else(|| {
             tauri::Error::AssetNotFound("default window icon".to_string())
         })?)
-        .tooltip("Zuno")
+        .tooltip("YTM Offline")
         .menu(&menu)
         // The menu is for the right-click; a left click should just bring the window back.
         .show_menu_on_left_click(false)
@@ -1907,7 +1846,7 @@ fn load_youtube_music_cookie_entries() -> Result<Option<String>, CommandError> {
 
 /*
  * The Keychain entry backing `load_or_create_cookie_encryption_key` is scoped to this build's
- * code signature. Zuno's macOS builds are ad-hoc signed (no paid Developer ID), so that
+ * code signature. Earlier macOS builds were ad-hoc signed (no paid Developer ID), so that
  * signature — and with it, access to the old key — changes on every single update. Before this
  * guarded against it, a stale key read as `NoEntry`, the loader minted a brand new random one,
  * and it was handed straight to AES-GCM against ciphertext only the *old* key could ever open:
@@ -3127,6 +3066,47 @@ fn offline_entry_path(app: &tauri::AppHandle, track_id: &str) -> Result<PathBuf,
     Ok(offline_dir(app)?.join(format!("{track_id}.bin")))
 }
 
+fn offline_artwork_path(app: &tauri::AppHandle, track_id: &str) -> Result<PathBuf, CommandError> {
+    offline_entry_path(app, track_id)?;
+    Ok(offline_dir(app)?.join(format!("{track_id}.cover")))
+}
+
+#[tauri::command]
+fn offline_artwork_save(
+    app: tauri::AppHandle,
+    track_id: String,
+    mime_type: String,
+    data_base64: String,
+) -> Result<(), CommandError> {
+    let bytes = STANDARD.decode(data_base64).map_err(|error| cache_error(format!("invalid artwork: {error}")))?;
+    if bytes.len() > MAX_ARTWORK_BYTES { return Err(cache_error("artwork is too large")); }
+    let valid = match mime_type.as_str() {
+        "image/jpeg" => bytes.starts_with(&[0xff, 0xd8, 0xff]),
+        "image/png" => bytes.starts_with(&[0x89, b'P', b'N', b'G']),
+        "image/webp" => bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(&b"WEBP"[..]),
+        _ => false,
+    };
+    if !valid { return Err(cache_error("unsupported artwork format")); }
+    let path = offline_artwork_path(&app, &track_id)?;
+    fs::create_dir_all(offline_dir(&app)?).map_err(|error| cache_error(format!("artwork directory failed: {error}")))?;
+    let temporary = path.with_extension("cover.part");
+    fs::write(&temporary, &bytes).map_err(|error| cache_error(format!("artwork write failed: {error}")))?;
+    fs::rename(&temporary, &path).map_err(|error| cache_error(format!("artwork commit failed: {error}")))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn offline_artwork_read(app: tauri::AppHandle, track_id: String) -> Result<Option<LocalArtwork>, CommandError> {
+    let path = offline_artwork_path(&app, &track_id)?;
+    if !path.exists() { return Ok(None); }
+    let bytes = fs::read(path).map_err(|error| cache_error(format!("artwork read failed: {error}")))?;
+    let mime_type = if bytes.starts_with(&[0xff, 0xd8, 0xff]) { "image/jpeg" }
+        else if bytes.starts_with(&[0x89, b'P', b'N', b'G']) { "image/png" }
+        else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(&b"WEBP"[..]) { "image/webp" }
+        else { return Err(cache_error("unsupported stored artwork")); };
+    Ok(Some(LocalArtwork { mime_type: mime_type.to_string(), data_base64: STANDARD.encode(bytes) }))
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OfflineEntryInfo {
@@ -3628,6 +3608,10 @@ fn offline_audio_remove(app: tauri::AppHandle, track_id: String) -> Result<(), C
         fs::remove_file(&path)
             .map_err(|error| cache_error(format!("offline delete failed: {error}")))?;
     }
+    let cover = offline_artwork_path(&app, &track_id)?;
+    if cover.exists() {
+        fs::remove_file(cover).map_err(|error| cache_error(format!("offline artwork delete failed: {error}")))?;
+    }
     Ok(())
 }
 
@@ -3705,6 +3689,7 @@ fn offline_audio_prune(app: tauri::AppHandle, max_bytes: u64) -> Result<OfflineS
             break;
         }
         if fs::remove_file(path).is_ok() {
+            let _ = fs::remove_file(path.with_extension("cover"));
             used_bytes = used_bytes.saturating_sub(*size);
             entry_count = entry_count.saturating_sub(1);
         }
@@ -5260,7 +5245,6 @@ pub fn run() {
         .manage(YoutubeCookieJar(Mutex::new(CookieJarState::default())))
         .manage(discord_manager)
         .plugin(tauri_plugin_autostart::Builder::new().build())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init());
@@ -5295,7 +5279,6 @@ pub fn run() {
             app.manage(audio::NativeAudio::new(app.handle().clone()));
             // Before the log is initialised, so a first run after the rename still logs to
             // the directory the user's settings were just restored into.
-            migrate_legacy_app_data(app.handle());
             if let Err(error) = initialize_app_log(app.handle()) {
                 std::eprintln!("[internal][tauri][warn] {}", error.message);
             }
@@ -5372,6 +5355,8 @@ pub fn run() {
             fetch_audio_bytes,
             fetch_audio_source,
             offline_audio_save,
+            offline_artwork_save,
+            offline_artwork_read,
             offline_audio_source,
             offline_audio_has,
             offline_audio_remove,

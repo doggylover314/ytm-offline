@@ -93,6 +93,7 @@ export { CheckCircleIcon as CheckIcon } from "@solar-icons/react/linear/check-ci
 export { CheckCircleIcon as CheckActiveIcon } from "@solar-icons/react/bold/check-circle";
 export { RefreshIcon } from "@solar-icons/react/linear/refresh";
 export { DownloadMinimalisticIcon as DownloadIcon } from "@solar-icons/react/linear/download-minimalistic";
+export { DownloadMinimalisticIcon as DownloadActiveIcon } from "@solar-icons/react/bold/download-minimalistic";
 export { TrashBinTrashIcon as TrashIcon } from "@solar-icons/react/linear/trash-bin-trash";
 export { CopyIcon } from "@solar-icons/react/linear/copy";
 export { PenIcon as PencilIcon } from "@solar-icons/react/linear/pen";

@@ -1,13 +1,13 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
+import { type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
 import { logInternalError } from "./logging";
 
 const RELEASE_TAG_PREFIX = "v";
 const RELEASES_URL =
-  "https://github.com/noFAYZ/zuno/releases/tag";
+  "https://github.com/doggylover314/ytm-offline/releases/tag";
 const RELEASES_API_URL =
-  "https://api.github.com/repos/noFAYZ/zuno/releases/latest";
+  "https://api.github.com/repos/doggylover314/ytm-offline/releases/latest";
 const SNOOZE_PREFIX = "just-another-music-client:update-snooze:";
 const SNOOZE_DURATION_MS = 24 * 60 * 60 * 1000;
 
@@ -70,30 +70,7 @@ async function checkViaGithubApi(): Promise<UpdateInfo | null> {
 }
 
 export async function checkForUpdates(): Promise<UpdateInfo | null> {
-  const isMacOS =
-    typeof navigator !== "undefined" && /Macintosh|Mac OS X/.test(navigator.userAgent);
-
-  if (isMacOS) {
-    return checkViaGithubApi();
-  }
-
-  let update: Update | null;
-  try {
-    update = await check();
-  } catch (error) {
-    logInternalError("updateChecker.checkForUpdates failed", error);
-    throw error;
-  }
-
-  if (!update) return null;
-
-  return {
-    installedVersion: update.currentVersion,
-    version: update.version,
-    releaseUrl: `${RELEASES_URL}/${RELEASE_TAG_PREFIX}${encodeURIComponent(update.version)}`,
-    canInstall: true,
-    update,
-  };
+  return checkViaGithubApi();
 }
 
 export async function installUpdate(

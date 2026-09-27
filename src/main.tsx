@@ -41,6 +41,7 @@ import { hydrateToolbarItemSettings } from "./ui/settings/toolbarItems";
 import { hydrateHomeSectionSettings } from "./ui/settings/homeSections";
 import { applyRenderEffects, hydrateRenderEffects } from "./ui/settings/renderEffects";
 import { startMemoryReport } from "./internal/memoryReport";
+import { applyAccentColor, hydrateAccentColor } from "./ui/settings/accent";
 
 logInternalInfo("main.bootstrap start");
 // Before React mounts: a resolution restored after first paint is a resolution that already
@@ -50,6 +51,7 @@ applyPlatformAttributes();
 void detectTilingWindowManager();
 // Before React mounts: a late theme apply shows a flash of the wrong palette.
 applyTheme();
+applyAccentColor();
 watchSystemTheme();
 applyPaperPcMode();
 applyRenderEffects();
@@ -64,6 +66,7 @@ void Promise.all([
   hydratePaperPcMode(),
   hydrateRenderEffects(),
   hydrateTheme(),
+  hydrateAccentColor(),
   hydrateWindowControlSettings(),
   hydrateMediaSessionSettings(),
   hydrateMiniPlayerSettings(),
@@ -122,7 +125,7 @@ window.addEventListener("unhandledrejection", (event) => {
  */
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <ErrorBoundary label="Zuno">
+    <ErrorBoundary label="YTM Offline">
       <App />
     </ErrorBoundary>
   </React.StrictMode>,
@@ -135,4 +138,3 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
  */
 syncLocalAudioWatcher();
 void listen("local-audio-changed", () => notifyLocalPlaylistsChanged());
-

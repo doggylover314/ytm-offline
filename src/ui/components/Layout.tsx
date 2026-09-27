@@ -2,8 +2,6 @@ import { ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } 
 import { AnimatePresence, motion } from "motion/react";
 import { cn } from "@/lib/utils";
 import { SearchBar } from "./SearchBar";
-import { TrackArtwork } from "./TrackArtwork";
-import { useAmbientArtwork } from "../stores/ambientArtworkStore";
 import { Sidebar } from "./Sidebar";
 import type { Album, Playlist } from "../../datasource/types";
 
@@ -58,7 +56,6 @@ export function Layout({
   rightPanelWidth = 340,
   scrollKey,
 }: LayoutProps) {
-  const ambientArtwork = useAmbientArtwork();
   const pageContentRef = useRef<HTMLDivElement>(null);
   /** One entry per `scrollKey` ever visited this session. Ephemeral on purpose — a browser tab
    *  does not persist scroll across a reload either, and it would go stale against content that
@@ -243,46 +240,6 @@ export function Layout({
         {/* No backdrop-blur: `bg-background` is fully opaque, so a backdrop filter here costs a
             composited layer and a blur pass to render something nothing can see through. */}
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-3 px-4 pt-3 bg-background rounded-tl-lg">
-          {/*
-            Ambient wash for the page beneath. Rendered here rather than inside the page so
-            it can start at the very top of the column — behind the search bar — instead of
-            being clipped at the scroll container's edge.
-
-            Everything after this is positioned, so DOM order alone puts the chrome above it;
-            no z-index juggling, and no stacking context that would trap the blur.
-          */}
-          {ambientArtwork ? (
-            <span
-              key={ambientArtwork}
-              className="pointer-events-none absolute inset-x-0 top-0 h-[22rem] overflow-hidden [mask-image:linear-gradient(to_bottom,background_25%,transparent)] rounded-tl-lg"
-              aria-hidden="true"
-              data-fx="ambient"
-            >
-              {/*
-                The blur radius drives the intermediate textures the compositor allocates, and
-                this is one of the largest surfaces in the window. 32px is enough here because
-                the source is a 120px image stretched across the full width — a ~20x upscale is
-                already most of the softness, and the filter only finishes the job.
-
-                `scale-125` is gone for the same reason: the negative insets already extend this
-                well past the clipped box on three sides, so the scale was adding composited
-                area to hide edges that were never reachable.
-              */}
-              <span className="absolute -inset-x-1/4 -top-1/2 bottom-0 opacity-40 blur-[32px] saturate-[2]">
-                {/*
-                  Deliberately the smallest variant: this is blurred and dropped to 40% opacity,
-                  so nothing above 120px survives to be seen — it only costs texture.
-                */}
-                <TrackArtwork
-                  className="size-full"
-                  size={120}
-                  artworkUrl={ambientArtwork}
-                  iconSize={0}
-                />
-              </span>
-            </span>
-          ) : null}
-
           {showSearchBar && (
             <div className="relative">
               <SearchBar

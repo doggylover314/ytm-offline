@@ -16,6 +16,15 @@
 @import "tailwindcss";
 @source not "../../../docs";
 
+@keyframes ytm-scroll-overflow {
+  0%, 12% { transform: translateX(0); }
+  55%, 75% { transform: translateX(var(--overflow-distance)); }
+  100% { transform: translateX(0); }
+}
+
+.ytm-overflow-scroll { animation: ytm-scroll-overflow var(--scroll-duration) ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .ytm-overflow-scroll { animation: none; } }
+
 /*
  * Design tokens consumed by the vendored beUI components.
  * Neutral shadcn surfaces, with the app's #ff0033 kept as `primary` (accent only).

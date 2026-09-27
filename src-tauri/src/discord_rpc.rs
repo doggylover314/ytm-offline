@@ -4,9 +4,8 @@ use serde_json::json;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const DISCORD_CLIENT_ID: &str = "1515682467154100344";
-const GITHUB_REPO: &str = "https://github.com/noFAYZ/zuno";
-const ACTIVITY_NAME: &str = "Zuno";
+const GITHUB_REPO: &str = "https://github.com/doggylover314/ytm-offline";
+const ACTIVITY_NAME: &str = "YTM Offline";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DiscordPresenceData {
@@ -43,7 +42,9 @@ impl DiscordRpcManager {
             return Ok(());
         }
 
-        match DiscordIpcClient::new(DISCORD_CLIENT_ID) {
+        let client_id = std::env::var("YTM_OFFLINE_DISCORD_CLIENT_ID")
+            .map_err(|_| "Set YTM_OFFLINE_DISCORD_CLIENT_ID to your Discord application ID to enable Rich Presence".to_string())?;
+        match DiscordIpcClient::new(&client_id) {
             Ok(mut client) => {
                 if let Err(e) = client.connect() {
                     return Err(format!("Failed to connect to Discord: {}", e));
@@ -97,7 +98,7 @@ impl DiscordRpcManager {
          * The artist, not the app, is the headline.
          *
          * `name` is what Discord prints after "Listening to", so sending the app name made
-         * every song read "Listening to Zuno" — the same line for everything, saying nothing
+         * every song read "Listening to the app" — the same line for everything, saying nothing
          * about what is actually playing. The artist goes there and the app name is only the
          * fallback for a track with no artist, so the line is never empty.
          */
@@ -118,7 +119,7 @@ impl DiscordRpcManager {
             },
             "buttons": [
                 {
-                    "label": "Get Zuno",
+                    "label": "Get YTM Offline",
                     "url": GITHUB_REPO,
                 }
             ],

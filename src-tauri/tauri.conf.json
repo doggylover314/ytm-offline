@@ -1,22 +1,22 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Zuno",
+  "productName": "YTM Offline",
   "version": "1.4.0",
-  "identifier": "com.zuno.desktop",
+  "identifier": "io.github.doggylover314.ytmoffline",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "pnpm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "pnpm run build",
     "frontendDist": "../dist"
   },
   "app": {
-    "macOSPrivateApi": true,
+    "macOSPrivateApi": false,
     "windows": [
       {
-        "title": "Zuno",
+        "title": "YTM Offline",
         "decorations": false,
-        "transparent": true,
-        "shadow": false,
+        "transparent": false,
+        "shadow": true,
         "width": 1280,
         "height": 900,
         "minWidth": 900,
@@ -30,7 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "category": "Music",
     "linux": {
       "appimage": {
@@ -45,17 +45,8 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
+      "icons/icon.png"
     ]
   },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMyMDQ0MjEzQjkxMThGQ0MKUldUTWp4RzVFMElFTXZGMmxnOC84VXlUTkZyaStyQzFkcXd6UVczeGNBNkVuWWU3MjdIM2JLVkgK",
-      "endpoints": [
-        "https://github.com/noFAYZ/zuno/releases/latest/download/latest.json",
-        "https://raw.githubusercontent.com/noFAYZ/zuno/updater-channel/latest.json"
-      ]
-    }
-  }
+  "plugins": {}
 }

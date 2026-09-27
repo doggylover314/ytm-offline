@@ -7,7 +7,6 @@ import { useNowPlaying } from "../hooks/useNowPlaying";
 import type { Album, Track } from "../../datasource/types";
 import type { LibraryController } from "../../player/LibraryController";
 import type { PlayerControllerActions } from "../../player/playerStore";
-import { shuffleTracks } from "../../player/shuffleTracks";
 import { useTrackContextMenu } from "../components/TrackContextMenu";
 import { SelectionBar } from "../components/SelectionBar";
 import { useTrackSelection } from "../hooks/useTrackSelection";
@@ -47,6 +46,7 @@ export function AlbumView({ album, playerController, libraryController }: AlbumV
     isPlaying,
     isLoading: isPlayerLoading,
     playbackOrderMode,
+    shuffleEnabled,
   } = useNowPlaying();
   const [tracks, setTracks] = useState<Track[]>([]);
   /*
@@ -155,19 +155,6 @@ export function AlbumView({ album, playerController, libraryController }: AlbumV
     void playerController.playTrackById(firstTrack.id, tracks);
   };
 
-  /*
-   * Queued in album order with shuffle switched on afterwards, not pre-shuffled — so the player
-   * bar's toggle reflects reality, and turning shuffle off restores the album's real running
-   * order rather than treating the shuffle as the original.
-   */
-  const playShuffled = async () => {
-    const firstTrack = shuffleTracks(tracks)[0];
-    if (!firstTrack) return;
-    const started = await playerController.playTrackById(firstTrack.id, tracks, false, true);
-    if (!started) return;
-    playerController.setShuffleEnabled(true);
-  };
-
   const handleAlbumSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== "Backspace" || albumSearchQuery) return;
     event.preventDefault();
@@ -189,7 +176,8 @@ export function AlbumView({ album, playerController, libraryController }: AlbumV
           isPlaying: isCurrentCollection && isPlaying,
           isLoading: isCurrentCollection && isPlayerLoading,
         }}
-        onShuffle={() => void playShuffled()}
+        onShuffle={() => playerController.toggleShuffle()}
+        shuffleEnabled={shuffleEnabled}
         loop={{
           onPlay: playInLoop,
           onCycle: () => playerController.setPlaybackOrderMode(

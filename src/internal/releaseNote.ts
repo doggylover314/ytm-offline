@@ -13,7 +13,7 @@ import { getAppSetting, setAppSetting } from "./appSettings";
  *   **Topic** — one line, in plain language, about what changed for the listener.
  *   ...one line per topic, four or so at most...
  *
- *   Report anything broken on GitHub, or come say hello at /r/ZunoMusic.
+ *   Report anything broken on GitHub.
  *
  *   Thanks :)
  *
@@ -23,15 +23,11 @@ import { getAppSetting, setAppSetting } from "./appSettings";
  */
 const SEEN_VERSION_KEY = "release-note-seen-version";
 
-export const RELEASE_NOTE_BODY = `**Accounts** — switch between multiple YouTube Music accounts instantly, no signing out required.
-**Sound** — pick your exact output device (real speaker/headphone names on Linux too), plus a bypass toggle and mini EQ right in the player bar.
-**Playlists** — shuffle now truly shuffles the whole playlist from wherever you are in it, loop cycles properly instead of getting stuck, and any playlist can be hidden from your library.
-**Discovery** — start a radio station from any track, and pages load in with proper skeletons instead of a blank flash.
-**Fixes** — some tracks auto-skipping a few seconds in, crossfade stalling when minimized, YouTube embed errors now falling back automatically, and a second launch refocusing Zuno instead of opening twice.
+export const RELEASE_NOTE_BODY = `**YTM Offline** — a lighter Linux music player with Home, Library, and Downloads.
+**Offline** — save playlists with one click and keep them synced without duplicate audio files.
+**Player** — artwork, lyrics, shuffle, and the mini-player remain close at hand.
 
-Report anything broken on GitHub, or come say hello at /r/ZunoMusic.
-
-Thanks :)`;
+Report anything broken at https://github.com/doggylover314/ytm-offline/issues.`;
 
 export type ReleaseNoteSegment =
   | { kind: "text"; value: string }
@@ -120,9 +116,9 @@ export function shouldShowReleaseNote(
  * both cases and settle nothing.
  */
 const PRIOR_USE_KEYS = [
-  "zuno.play-history.v1",
+  "ytm-offline.play-history.v1",
   "yt-music-dock.app-session.v1",
-  "zuno.offline-manifest.v1",
+  "ytm-offline.offline-manifest.v1",
   "ytc-local-playlists-v1",
   "yt-music-dock:recent-playlists",
 ];

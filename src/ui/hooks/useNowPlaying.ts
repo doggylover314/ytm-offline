@@ -10,6 +10,7 @@ export interface NowPlaying {
   isLoading: boolean;
   /** In-order, shuffle, repeat-one or repeat-all. */
   playbackOrderMode: PlaybackOrderMode;
+  shuffleEnabled: boolean;
 }
 
 /**
@@ -28,6 +29,7 @@ export function useNowPlaying(): NowPlaying {
       currentTrack: player.currentTrack,
       status: player.status,
       playbackOrderMode: player.playbackOrderMode,
+      shuffleEnabled: player.shuffleEnabled,
     }),
     shallowEqual,
   );
@@ -36,5 +38,6 @@ export function useNowPlaying(): NowPlaying {
     isPlaying: state.status === "playing",
     isLoading: state.status === "loading",
     playbackOrderMode: state.playbackOrderMode,
+    shuffleEnabled: state.shuffleEnabled,
   };
 }

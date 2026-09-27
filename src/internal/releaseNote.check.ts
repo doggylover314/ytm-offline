@@ -69,10 +69,10 @@ const plain = parseReleaseNote("nothing to see here");
 equal(plain.length, 1, "text with no links is one segment");
 equal(plain[0].kind, "text", "and it is text");
 
-const sub = parseReleaseNote("Come say hello at /r/myzuno, and enjoy");
+const sub = parseReleaseNote("Come say hello at /r/music, and enjoy");
 equal(sub.length, 3, "a subreddit splits the sentence in three");
 equal(sub[1].kind, "link", "the middle piece is the link");
-equal(sub[1].kind === "link" ? sub[1].url : "", "https://www.reddit.com/r/myzuno", "resolved to reddit");
+equal(sub[1].kind === "link" ? sub[1].url : "", "https://www.reddit.com/r/music", "resolved to reddit");
 equal(sub[2].kind === "text" ? sub[2].value : "", ", and enjoy", "the comma stays outside the link");
 
 const url = parseReleaseNote("see https://example.com/x for more");
@@ -83,7 +83,7 @@ equal(both.filter((s) => s.kind === "link").length, 2, "every mention links, not
 
 equal(parseReleaseNote("")[0], undefined, "an empty body yields no segments");
 equal(
-  parseReleaseNote("/r/myzuno").length,
+  parseReleaseNote("/r/music").length,
   1,
   "a body that is nothing but a link has no empty text around it",
 );
@@ -108,7 +108,7 @@ equal(bold.length, 3, "emphasis splits the line in three");
 equal(bold[1].kind, "strong", "the middle piece is emphasised");
 equal(bold[1].kind === "strong" ? bold[1].value : "", "Gapless", "and the markers are stripped");
 
-const mixed = parseReleaseNote("**Equaliser** — see /r/myzuno");
+const mixed = parseReleaseNote("**Equaliser** — see /r/music");
 equal(mixed.filter((s) => s.kind === "strong").length, 1, "emphasis and links coexist");
 equal(mixed.filter((s) => s.kind === "link").length, 1, "the link still resolves alongside it");
 

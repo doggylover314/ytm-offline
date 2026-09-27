@@ -1,43 +1,18 @@
-import { useLayoutEffect, useRef, useState } from "react";
 import { SpinnerSteps } from "@/components/motion/loader";
-import { Marquee } from "@/components/motion/marquee";
 import { cn } from "@/lib/utils";
 import { HeartActiveIcon, HeartBrokenIcon, HeartIcon } from "@/ui/icons";
 import { shallowEqual, usePlayerSelector } from "../../../player/playerStore";
 import { useLibraryState } from "../../../player/playerStore";
-import { usePlayerUIState } from "../../stores/playerUIStore";
 import { TrackArtwork } from "../TrackArtwork";
 import { ArtistLinks } from "../ArtistLinks";
 import { useTrackContextMenu } from "../TrackContextMenu";
+import { OverflowScrollText } from "./OverflowScrollText";
 
 export function TrackInfo() {
   const state = usePlayerSelector((player) => ({ currentTrack: player.currentTrack }), shallowEqual);
   const libraryState = useLibraryState();
-  const uiState = usePlayerUIState();
   const { openTrackMenu, toggleTrackLike } = useTrackContextMenu();
   const currentTrack = state.currentTrack;
-  const titleViewportRef = useRef<HTMLDivElement>(null);
-  const titleTextRef = useRef<HTMLSpanElement>(null);
-  const [isTitleOverflowing, setIsTitleOverflowing] = useState(false);
-
-  // Only scroll a title that actually overflows — a permanent marquee on short
-  // titles is noise. Measured rather than guessed from character count.
-  useLayoutEffect(() => {
-    const viewport = titleViewportRef.current;
-    const text = titleTextRef.current;
-    if (!viewport || !text) return;
-
-    const updateOverflow = () => {
-      setIsTitleOverflowing(text.scrollWidth - viewport.clientWidth > 1);
-    };
-    updateOverflow();
-
-    const observer = new ResizeObserver(updateOverflow);
-    observer.observe(viewport);
-    observer.observe(text);
-    return () => observer.disconnect();
-  }, [currentTrack?.title]);
-
   if (!currentTrack) {
     return null;
   }
@@ -56,39 +31,12 @@ export function TrackInfo() {
       className="flex min-w-0 items-center gap-3"
       onContextMenu={(event) => openTrackMenu(event, currentTrack)}
     >
-      {uiState.showAlbumArt && (
-        <TrackArtwork
-          className="size-12 shrink-0  object-cover"
-          size={48}
-          artworkUrl={currentTrack.artworkUrl}
-          iconSize={22}
-        />
-      )}
+      <TrackArtwork className="size-12 shrink-0 rounded-lg object-cover" size={48} artworkUrl={currentTrack.artworkUrl} iconSize={22} />
       <div className="flex min-w-0 flex-col gap-0.5">
-        <div ref={titleViewportRef} className="relative min-w-0 overflow-hidden">
-          {/* Hidden measuring copy — Marquee duplicates its children, so width
-              must be read from a single stable node. */}
-          <span
-            ref={titleTextRef}
-            aria-hidden={isTitleOverflowing}
-            className={cn(
-              "block whitespace-nowrap text-sm font-medium text-foreground",
-              isTitleOverflowing && "invisible absolute",
-            )}
-          >
-            {currentTrack.title}
-          </span>
-          {isTitleOverflowing && (
-            <Marquee speed={22} gap="2.5rem" className="text-sm font-medium text-foreground">
-              <span className="whitespace-nowrap" title={currentTrack.title}>
-                {currentTrack.title}
-              </span>
-            </Marquee>
-          )}
-        </div>
-        <div className="truncate text-xs text-muted-foreground">
+        <OverflowScrollText text={currentTrack.title} className="text-sm font-semibold text-foreground" />
+        <OverflowScrollText text={currentTrack.artist} className="text-xs font-normal text-muted-foreground">
           <ArtistLinks artists={currentTrack.artists} fallback={currentTrack.artist} />
-        </div>
+        </OverflowScrollText>
       </div>
 
       {canLikeCurrentTrack && (

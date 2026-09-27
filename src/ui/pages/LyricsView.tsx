@@ -15,6 +15,7 @@ import { LYRICS_SOURCES } from "../../datasource/youtube/lyricsSources";
 import { FloatingPanel } from "../components/FloatingPanel";
 import { logInternalWarn } from "../../internal/logging";
 import { playerController, shallowEqual, usePlayerSelector } from "../../player/playerStore";
+import { getOfflineLyrics } from "../../player/offlineStore";
 import { playerUIStore, usePlayerUIState } from "../stores/playerUIStore";
 import { ArtistLinks } from "../components/ArtistLinks";
 import { TrackArtwork } from "../components/TrackArtwork";
@@ -144,7 +145,7 @@ export function LyricsView({ onClose }: LyricsViewProps) {
     if (!track) return;
 
     setIsLoading(true);
-    void playerController.getLyrics(track)
+    void Promise.resolve(getOfflineLyrics(track.id) ?? playerController.getLyrics(track))
       .then((result) => {
         if (!cancelled) setLyrics(result);
       })

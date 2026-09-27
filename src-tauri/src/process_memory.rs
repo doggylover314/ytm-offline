@@ -85,7 +85,7 @@ fn collect() -> MemoryReport {
 
     // Breadth-first from our own pid, so utility processes nested under the browser process are
     // counted rather than only the direct children.
-    let mut queue = vec![(own_pid, "zuno.exe".to_string())];
+    let mut queue = vec![(own_pid, "ytm-offline".to_string())];
     let mut seen = std::collections::HashSet::new();
 
     while let Some((pid, name)) = queue.pop() {

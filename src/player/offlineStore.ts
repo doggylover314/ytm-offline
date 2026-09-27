@@ -1,16 +1,19 @@
 import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Track } from "../datasource/types";
+import type { Lyrics, Track } from "../datasource/types";
+import { tauriFetch } from "../datasource/youtube/tauriFetch";
+import { toBase64 } from "../internal/base64";
 import { logInternalError, logInternalInfo, logInternalWarn } from "../internal/logging";
 import { getAppSetting, setAppSetting } from "../internal/appSettings";
 import { getDownloadQuality, type AudioQuality } from "../internal/audioQuality";
 
-const MANIFEST_KEY = "zuno.offline-manifest.v1";
-const MAX_BYTES_KEY = "zuno.offline-max-bytes.v1";
+const MANIFEST_KEY = "ytm-offline.offline-manifest.v1";
+const MAX_BYTES_KEY = "ytm-offline.offline-max-bytes.v1";
+export const OFFLINE_ARTWORK_PREFIX = "ytm-offline-artwork:";
 
-/** Default ceiling for downloaded audio. Roughly 1,500 songs at typical bitrates. */
-export const DEFAULT_OFFLINE_MAX_BYTES = 8 * 1024 * 1024 * 1024;
+/** Synced playlists are never evicted by an arbitrary default disk quota. */
+export const DEFAULT_OFFLINE_MAX_BYTES = Number.POSITIVE_INFINITY;
 
 /**
  * One download at a time.
@@ -26,6 +29,10 @@ export interface OfflineEntry {
   track: Track;
   byteLength: number;
   downloadedAt: number;
+  /** Older manifests have neither field and are treated as individually saved. */
+  savedIndividually?: boolean;
+  playlistIds?: string[];
+  lyrics?: Lyrics;
 }
 
 export interface OfflineState {
@@ -222,6 +229,10 @@ export function getOfflineTrack(trackId: string): Track | undefined {
   return state.entries[trackId]?.track;
 }
 
+export function getOfflineLyrics(trackId: string): Lyrics | undefined {
+  return state.entries[trackId]?.lyrics;
+}
+
 /** Resolves the stream URL for a track. Callers pass this in so the store stays data-source agnostic. */
 type StreamUrlResolver = (
   track: Track,
@@ -229,15 +240,46 @@ type StreamUrlResolver = (
 ) => Promise<{ url: string; mimeType: string; cookie?: string }>;
 
 let resolveStreamUrl: StreamUrlResolver | null = null;
+let resolveLyrics: ((track: Track) => Promise<Lyrics>) | null = null;
 
 export function setOfflineStreamResolver(resolver: StreamUrlResolver): void {
   resolveStreamUrl = resolver;
 }
 
-export function queueDownload(track: Track): void {
+export function setOfflineLyricsResolver(resolver: (track: Track) => Promise<Lyrics>): void {
+  resolveLyrics = resolver;
+}
+
+async function saveArtwork(track: Track): Promise<string | undefined> {
+  if (!track.artworkUrl) return undefined;
+  const response = await tauriFetch(track.artworkUrl);
+  if (!response.ok) throw new Error(`Artwork returned HTTP ${response.status}`);
+  const mimeType = response.headers.get("content-type")?.split(";")[0] ?? "";
+  if (!["image/jpeg", "image/png", "image/webp"].includes(mimeType)) return undefined;
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.length > 12 * 1024 * 1024) return undefined;
+  await invoke("offline_artwork_save", { trackId: track.id, mimeType, dataBase64: toBase64(bytes) });
+  return `${OFFLINE_ARTWORK_PREFIX}${track.id}`;
+}
+
+export function queueDownload(track: Track, playlistId?: string): void {
   if (track.source === "local") return;
-  if (state.entries[track.id] || state.queued.includes(track.id)) return;
-  if (state.downloadingId === track.id) return;
+  const existing = state.entries[track.id];
+  if (existing) {
+    const playlistIds = playlistId
+      ? [...new Set([...(existing.playlistIds ?? []), playlistId])]
+      : existing.playlistIds ?? [];
+    const savedIndividually = playlistId ? existing.savedIndividually !== false : true;
+    if (playlistIds.length !== (existing.playlistIds ?? []).length || savedIndividually !== (existing.savedIndividually !== false)) {
+      commitEntries({ ...state.entries, [track.id]: { ...existing, playlistIds, savedIndividually } });
+    }
+    return;
+  }
+  const owners = pendingOwners.get(track.id) ?? { manual: false, playlists: new Set<string>() };
+  if (playlistId) owners.playlists.add(playlistId);
+  else owners.manual = true;
+  pendingOwners.set(track.id, owners);
+  if (state.queued.includes(track.id) || state.downloadingId === track.id) return;
 
   const { [track.id]: _cleared, ...failed } = state.failed;
   setState({
@@ -253,13 +295,18 @@ export function queueDownloads(tracks: Track[]): void {
   for (const track of tracks) queueDownload(track);
 }
 
+export function queuePlaylistDownloads(playlistId: string, tracks: Track[]): void {
+  for (const track of tracks) queueDownload(track, playlistId);
+}
+
 export function cancelDownload(trackId: string): void {
   pendingTracks.delete(trackId);
+  pendingOwners.delete(trackId);
   const { [trackId]: _dropped, ...pending } = state.pending;
   setState({ queued: state.queued.filter((id) => id !== trackId), pending });
 }
 
-export async function removeDownload(trackId: string): Promise<void> {
+async function removeDownloadFile(trackId: string): Promise<void> {
   cancelDownload(trackId);
   try {
     await invoke("offline_audio_remove", { trackId });
@@ -273,10 +320,37 @@ export async function removeDownload(trackId: string): Promise<void> {
   commitEntries(entries);
 }
 
+export async function removeDownload(trackId: string): Promise<void> {
+  const entry = state.entries[trackId];
+  if (entry?.playlistIds?.length) {
+    commitEntries({ ...state.entries, [trackId]: { ...entry, savedIndividually: false } });
+    return;
+  }
+  await removeDownloadFile(trackId);
+}
+
+export async function releasePlaylistDownload(playlistId: string, trackId: string): Promise<void> {
+  const entry = state.entries[trackId];
+  if (entry) {
+    const playlistIds = (entry.playlistIds ?? []).filter((id) => id !== playlistId);
+    if (playlistIds.length || entry.savedIndividually !== false) {
+      commitEntries({ ...state.entries, [trackId]: { ...entry, playlistIds } });
+    } else {
+      await removeDownloadFile(trackId);
+    }
+    return;
+  }
+  const owners = pendingOwners.get(trackId);
+  if (!owners) return;
+  owners.playlists.delete(playlistId);
+  if (!owners.manual && owners.playlists.size === 0) cancelDownload(trackId);
+}
+
 export async function removeAllDownloads(): Promise<void> {
   const ids = Object.keys(state.entries);
   setState({ queued: [], pending: {}, failed: {} });
   pendingTracks.clear();
+  pendingOwners.clear();
   for (const trackId of ids) {
     await invoke("offline_audio_remove", { trackId }).catch(() => {});
   }
@@ -285,6 +359,7 @@ export async function removeAllDownloads(): Promise<void> {
 
 /** Track objects for queued ids, so the worker has metadata without re-fetching. */
 const pendingTracks = new Map<string, Track>();
+const pendingOwners = new Map<string, { manual: boolean; playlists: Set<string> }>();
 
 async function pump(): Promise<void> {
   /*
@@ -324,19 +399,39 @@ async function pump(): Promise<void> {
         const { url, mimeType, cookie } = await resolveStreamUrl(track, getDownloadQuality());
         const byteLength = await invoke<number>("offline_audio_save", { url, trackId, cookie });
         logInternalInfo("offlineStore.download complete", { trackId, byteLength });
+        const [artwork, lyrics] = await Promise.allSettled([
+          saveArtwork(track),
+          resolveLyrics?.(track) ?? Promise.resolve(undefined),
+        ]);
         pendingTracks.delete(trackId);
+        const owners = pendingOwners.get(trackId);
+        pendingOwners.delete(trackId);
         {
           const { [trackId]: _done, ...pending } = state.pending;
           setState({ pending });
         }
-        commitEntries({
-          ...state.entries,
-          [trackId]: { track: { ...track, mimeType }, byteLength, downloadedAt: Date.now() },
-        });
+        if (owners && (owners.manual || owners.playlists.size)) {
+          commitEntries({
+            ...state.entries,
+            [trackId]: {
+              track: {
+                ...track, mimeType,
+                artworkUrl: artwork.status === "fulfilled" && artwork.value ? artwork.value : track.artworkUrl,
+              },
+              byteLength, downloadedAt: Date.now(),
+              savedIndividually: owners.manual,
+              playlistIds: [...owners.playlists],
+              lyrics: lyrics.status === "fulfilled" ? lyrics.value : undefined,
+            },
+          });
+        } else {
+          await invoke("offline_audio_remove", { trackId });
+        }
         setState({ downloadingId: null, progress: null });
         await prune();
       } catch (error) {
         pendingTracks.delete(trackId);
+        pendingOwners.delete(trackId);
         const { [trackId]: _failed, ...pending } = state.pending;
         const message = error instanceof Error ? error.message : String(error);
         logInternalError("offlineStore.download failed", error, { trackId });

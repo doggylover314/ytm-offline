@@ -51,6 +51,7 @@ import {
   UserIcon,
 } from "@/ui/icons";
 import { motion } from "motion/react";
+import { setAccentColor, useAccentColor } from "../settings/accent";
 import { cn } from "@/lib/utils";
 import {
   setThemePreference,
@@ -617,6 +618,7 @@ export function SettingsPage({
   const [lastFmError, setLastFmError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<SettingsTab>("about");
   const themePreference = useThemePreference();
+  const accentColor = useAccentColor();
   const [listeningShortcut, setListeningShortcut] = useState<KeyboardShortcutAction | null>(null);
   const keyboardShortcuts = useKeyboardShortcuts();
   const miniPlayerEnabled = useMiniPlayerEnabled();
@@ -664,7 +666,7 @@ export function SettingsPage({
   const streamingQuality = useStreamingQuality();
   const downloadQuality = useDownloadQuality();
   const [offlineMaxGb, setOfflineMaxGb] = useState(
-    () => getOfflineMaxBytes() / 1024 ** 3,
+    () => Number.isFinite(getOfflineMaxBytes()) ? getOfflineMaxBytes() / 1024 ** 3 : 0,
   );
   const [clearingDownloads, setClearingDownloads] = useState(false);
   const lastFmScrobblingEnabled = useLastFmScrobblingEnabled();
@@ -1452,7 +1454,7 @@ export function SettingsPage({
               title="Storage"
               titleId="library-storage-title"
               icon={<DownloadIcon size={18} aria-hidden="true" />}
-              description="How much disk Zuno is allowed to use."
+              description="Manage temporary cache and app-managed offline files."
             />
 
             <div className="flex flex-wrap items-end justify-between gap-4 py-2">
@@ -1527,21 +1529,20 @@ export function SettingsPage({
               </span>
               <div className="flex flex-wrap items-center gap-2">
                 <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-                  Maximum size
+                  Maximum size (0 = unlimited)
                   <span className="flex w-28 items-center gap-1.5 rounded-lg bg-background px-2.5 py-1.5 text-sm text-foreground focus-within:ring-2 focus-within:ring-inset focus-within:ring-ring/60">
                     <input
                       className="w-full min-w-0 bg-transparent outline-none"
                       type="number"
-                      min={1}
-                      max={512}
+                      min={0}
                       value={Math.round(offlineMaxGb)}
                       onChange={(event) => {
                         const next = Number(event.target.value);
                         if (!Number.isFinite(next)) return;
                         setOfflineMaxGb(next);
-                        setOfflineMaxBytes(Math.max(1, next) * 1024 ** 3);
+                        setOfflineMaxBytes(Math.max(0, next) * 1024 ** 3);
                       }}
-                      aria-label="Maximum download size in gigabytes"
+                      aria-label="Maximum download size in gigabytes, zero for unlimited"
                     />
                     <span className="shrink-0 text-xs text-muted-foreground">GB</span>
                   </span>
@@ -1713,12 +1714,12 @@ export function SettingsPage({
               title="System"
               titleId="library-system-title"
               icon={<SettingsIcon size={18} aria-hidden="true" />}
-              description="How Zuno behaves outside the window."
+              description="How YTM Offline behaves outside the window."
             />
 
             <SettingToggle
               title="Launch at startup"
-              description="Start Zuno when your computer starts."
+              description="Start YTM Offline when your computer starts."
               checked={autostartEnabled}
               disabled={autostartLoading}
               onCheckedChange={(checked) => void handleAutostartChange(checked)}
@@ -1729,7 +1730,7 @@ export function SettingsPage({
 
             <SettingToggle
               title="Minimize to tray"
-              description="Closing the window hides Zuno to the system tray and keeps playing. Quit from the tray icon."
+              description="Closing the window hides YTM Offline to the system tray and keeps playing. Quit from the tray icon."
               checked={minimizeToTray}
               onCheckedChange={setMinimizeToTray}
             />
@@ -2029,7 +2030,7 @@ export function SettingsPage({
               title="Playback method"
               description={
                 audioEngineMode === "native"
-                  ? "Zuno plays each track itself. About 90 MB lighter, slower to start, no gapless or crossfade."
+                  ? "YTM Offline plays each track itself. Lighter on memory, but slower to start and without gapless playback or crossfade."
                   : "A hidden YouTube frame plays each track. Costs about 90 MB, starts faster, required for gapless and crossfade."
               }
             >
@@ -2142,7 +2143,7 @@ export function SettingsPage({
               title="Session"
               titleId="session-settings-title"
               icon={<QueuePanelIcon size={18} aria-hidden="true" />}
-              description="What comes back when you reopen Zuno."
+              description="What comes back when you reopen YTM Offline."
             />
 
             <SettingToggle
@@ -2157,6 +2158,13 @@ export function SettingsPage({
 
       {activeTab === "appearance" && (
         <div className="flex flex-col gap-5" role="tabpanel" aria-label="Appearance settings">
+          <section className={SETTINGS_CARD} aria-labelledby="accent-settings-title">
+            <SettingsCardHeader title="Accent colour" titleId="accent-settings-title" icon={<PaletteIcon size={18} aria-hidden="true" />} description="Choose the colour for active controls and highlights." />
+            <label className="flex items-center gap-3 text-sm text-foreground">
+              <input type="color" value={accentColor} onChange={(event) => setAccentColor(event.target.value)} aria-label="Accent colour" className="size-10 cursor-pointer rounded-lg bg-transparent" />
+              <span>{accentColor.toUpperCase()}</span>
+            </label>
+          </section>
           <section className={SETTINGS_CARD} aria-labelledby="theme-settings-title">
             <SettingsCardHeader
               title="Theme"

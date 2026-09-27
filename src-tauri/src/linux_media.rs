@@ -48,8 +48,8 @@ impl LinuxMediaSession {
         }
 
         let config = PlatformConfig {
-            dbus_name: "zuno",
-            display_name: "Zuno",
+            dbus_name: "ytm-offline",
+            display_name: "YTM Offline",
             hwnd: None,
         };
 

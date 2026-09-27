@@ -12,7 +12,7 @@ export interface CollectTrackPagesOptions {
   hasMore: boolean;
   nextPageKey?: string;
   /** Ceiling on requests, so a source that always says "more" cannot loop forever. */
-  maxPages: number;
+  maxPages?: number;
   fetchPage: (pageKey: string) => Promise<TrackPage>;
   /** Called after each page so the list can fill in as it loads rather than in one jump. */
   onPage?: (tracks: Track[], hasMore: boolean, nextPageKey: string | undefined) => void;
@@ -44,7 +44,10 @@ export async function collectTrackPages({
   let more = hasMore;
   const seen = new Set(initial.map((track) => track.id));
 
-  for (let page = 0; more && pageKey && page < maxPages; page += 1) {
+  const seenPageKeys = new Set<string>();
+  for (let page = 0; more && pageKey && page < (maxPages ?? Number.MAX_SAFE_INTEGER); page += 1) {
+    if (seenPageKeys.has(pageKey)) break;
+    seenPageKeys.add(pageKey);
     const result = await fetchPage(pageKey);
     if (isStale?.()) return collected;
 

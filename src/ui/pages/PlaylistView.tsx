@@ -6,7 +6,6 @@ import type { Playlist, Track } from "../../datasource/types";
 import type { LibraryController } from "../../player/LibraryController";
 import type { PlayerControllerActions } from "../../player/playerStore";
 import { markPlaylistPlayed } from "../../player/recentPlaylists";
-import { shuffleTracks } from "../../player/shuffleTracks";
 import { useTrackContextMenu } from "../components/TrackContextMenu";
 import { addLocalPlaylistPath, isLocalPlaylist } from "../../player/localPlaylists";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -15,6 +14,7 @@ import { logInternalError } from "../../internal/logging";
 import { SelectionBar } from "../components/SelectionBar";
 import { useTrackSelection } from "../hooks/useTrackSelection";
 import { queueDownloads, useOfflineState } from "../../player/offlineStore";
+import { disablePlaylistSync, enablePlaylistSync, useSyncedPlaylists } from "../../player/playlistSync";
 import { usePlaylistContextMenu } from "../components/PlaylistContextMenu";
 import { formatCollectionMeta, MediaHeader } from "../components/MediaHeader";
 import { isLikedSongsId, likedSongsCover } from "../likedSongsArtwork";
@@ -30,18 +30,12 @@ import { collectTrackPages } from "./collectTrackPages";
  * the behaviour the original .playlistSearch width transition provided.
  */
 const SEARCH_FIELD =
-  "group/search flex min-h-8 items-center gap-1.5 overflow-hidden rounded-full bg-white/[0.04] px-2.5 " +
+  "group/search flex min-h-8 items-center gap-1.5 overflow-hidden rounded-full bg-card px-2.5 " +
   "text-muted-foreground transition-[width,background-color] duration-200 cursor-text " +
-  "hover:bg-white/[0.08] focus-within:bg-white/[0.08] focus-within:text-foreground " +
+  "hover:bg-muted focus-within:bg-muted focus-within:text-foreground " +
   "[&_input]:min-w-0 [&_input]:flex-1 [&_input]:bg-transparent [&_input]:text-sm " +
   "[&_input]:text-foreground [&_input]:outline-none [&_input]:placeholder:text-muted-foreground";
 const SEARCH_FIELD_COLLAPSED = "w-9 hover:w-56 focus-within:w-56";
-
-/*
- * Ceiling on a whole-playlist sweep. At YouTube page sizes this is far more than any real
- * playlist, and it exists only so a source that keeps reporting "more" cannot loop forever.
- */
-const MAX_COLLECT_PAGES = 200;
 
 interface PlaylistViewProps {
   playlist?: Playlist;
@@ -239,6 +233,7 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
     isPlaying,
     isLoading: isPlayerLoading,
     playbackOrderMode,
+    shuffleEnabled,
   } = useNowPlaying();
   const [tracks, setTracks] = useState<Track[]>([]);
   /** Bumped when a folder is added, so the scan re-runs in place. */
@@ -246,7 +241,6 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMoreTracks, setHasMoreTracks] = useState(false);
-  const [isCollectingAll, setIsCollectingAll] = useState(false);
   const [nextPageKey, setNextPageKey] = useState<string | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
@@ -279,6 +273,8 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
    * store is a count that drifts the moment a download finishes elsewhere.
    */
   const offlineState = useOfflineState();
+  const syncedPlaylists = useSyncedPlaylists();
+  const syncState = playlist ? syncedPlaylists[playlist.id] : undefined;
   const downloadCounts = useMemo(
     () => ({
       downloaded: tracks.filter((track) => Boolean(offlineState.entries[track.id])).length,
@@ -412,7 +408,6 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
     const loadingPlaylistId = playlist.id;
     // Held for the whole sweep so the scroll sentinel does not fetch the same pages alongside it.
     isCollectingAllRef.current = true;
-    setIsCollectingAll(true);
     setLoadMoreError(null);
 
     try {
@@ -420,7 +415,6 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
         initial: tracksRef.current,
         hasMore: hasMoreTracks,
         nextPageKey,
-        maxPages: MAX_COLLECT_PAGES,
         fetchPage: (pageKey) => libraryController.getPlaylistTrackPage(playlist, pageKey),
         isStale: () => playlistIdRef.current !== loadingPlaylistId,
         // Written through on every page so the list fills in as it loads, and the work already
@@ -440,7 +434,6 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
     } finally {
       if (playlistIdRef.current === loadingPlaylistId) {
         isCollectingAllRef.current = false;
-        setIsCollectingAll(false);
       }
     }
   }, [hasMoreTracks, libraryController, nextPageKey, playlist]);
@@ -667,23 +660,6 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
     if (started) markPlaylistPlayed(playlist.id);
   };
 
-  /*
-   * The queue is handed the playlist in its real order and shuffle is switched on afterwards,
-   * rather than being given a pre-shuffled array. Two reasons: the player bar's shuffle toggle
-   * then reflects reality instead of reading "off" over a shuffled queue, and turning shuffle
-   * back off restores the playlist's actual order — with a pre-shuffled array the queue's
-   * "original" order *is* the shuffle, so there is nothing to restore.
-   */
-  const playShuffled = async () => {
-    const firstTrack = shuffleTracks(tracks)[0];
-    if (!firstTrack) return;
-
-    const started = await playerController.playTrackById(firstTrack.id, tracks, false, true);
-    if (!started) return;
-    playerController.setShuffleEnabled(true);
-    markPlaylistPlayed(playlist.id);
-  };
-
   const selection = useTrackSelection(visibleTracks);
 
   const removeTrackFromList = (removedTrack: Track) => {
@@ -765,7 +741,8 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
             isPlaying: isCurrentCollection && isPlaying,
             isLoading: isCurrentCollection && isPlayerLoading,
           }}
-          onShuffle={() => void playShuffled()}
+          onShuffle={() => playerController.toggleShuffle()}
+          shuffleEnabled={shuffleEnabled}
           loop={{
             onPlay: () => void playInLoop(),
             onCycle: () => playerController.setPlaybackOrderMode(
@@ -787,10 +764,12 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
           }}
           download={{
             onStart: () => {
-              void collectAllTracks().then(queueDownloads);
+              if (playlist) void enablePlaylistSync(playlist, libraryController);
             },
+            onStop: () => { if (playlist) void disablePlaylistSync(playlist.id); },
+            isSynced: Boolean(syncState),
             counts: downloadCounts,
-            isBusy: isCollectingAll,
+            isBusy: Boolean(syncState?.syncing),
           }}
         />
         <PlaylistDescription playlist={playlist} libraryController={libraryController} />

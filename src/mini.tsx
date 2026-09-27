@@ -5,6 +5,7 @@ import { MotionConfig } from "motion/react";
 import "./ui/styles/global.css";
 import { applyPlatformAttributes } from "./ui/platform";
 import MiniPlayer from "./ui/components/mini-player/MiniPlayer";
+import { applyAccentColor, hydrateAccentColor } from "./ui/settings/accent";
 import { hydrateMiniPlayerSettings } from "./ui/settings/miniPlayer";
 import { applyPaperPcMode, hydratePaperPcMode } from "./ui/settings/paperPcMode";
 import {
@@ -14,6 +15,7 @@ import {
 } from "./ui/settings/renderEffects";
 
 applyPlatformAttributes();
+applyAccentColor();
 /*
  * The mini player is its own window, so it is its own document — none of the attributes
  * main.tsx stamps on <html> exist here, and it was running full blur, marquee and springs
@@ -23,7 +25,7 @@ applyPlatformAttributes();
  */
 applyPaperPcMode();
 applyRenderEffects();
-void Promise.all([hydrateMiniPlayerSettings(), hydratePaperPcMode(), hydrateRenderEffects()]);
+void Promise.all([hydrateMiniPlayerSettings(), hydratePaperPcMode(), hydrateRenderEffects(), hydrateAccentColor()]);
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

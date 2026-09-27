@@ -32,7 +32,7 @@ const MAX_ENTRIES = 500;
  */
 const MAX_BLOB_BYTES = 16 * 1024 * 1024;
 const MAX_PERSISTED_ENTRIES = 300;
-const STORAGE_KEY = "zuno:artwork-resolved-v1";
+const STORAGE_KEY = "ytm-offline:artwork-resolved-v1";
 
 const resolved = new Map<string, string>();
 /** Values that own a blob and must be revoked when evicted, and what each one weighs. */

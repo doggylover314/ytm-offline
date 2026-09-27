@@ -111,7 +111,7 @@ function isSignInCancellation(error: unknown): boolean {
 }
 
 /** Local mirror of dislikes: YouTube stores the rating but exposes no list to read it back. */
-const DISLIKED_TRACKS_STORAGE_KEY = "zuno:disliked-tracks-v1";
+const DISLIKED_TRACKS_STORAGE_KEY = "ytm-offline:disliked-tracks-v1";
 
 function readDislikedTrackIds(): Set<string> {
   try {
@@ -683,6 +683,7 @@ export class LibraryController {
     playlist: Playlist,
     pageKey?: string,
     onUpdate?: (page: TrackPage) => void,
+    fresh = false,
   ): Promise<TrackPage> {
     if (isLocalPlaylist(playlist)) {
       const page = pageKey ? { tracks: [], hasMore: false } : await getLocalPlaylistTrackPage(playlist);
@@ -706,7 +707,7 @@ export class LibraryController {
     }
     const page = await this.dataSource.getPlaylistTrackPage(playlist, pageKey, (updatedPage) => {
       onUpdate?.(pageKey ? updatedPage : mergeLocalTracks(updatedPage));
-    });
+    }, fresh);
     return pageKey ? page : mergeLocalTracks(page);
   }
 

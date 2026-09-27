@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 import { Tooltip } from "@/components/motion/tooltip";
 import { SpinnerSteps } from "@/components/motion/loader";
-import { CheckActiveIcon, DownloadIcon } from "@/ui/icons";
+import { DownloadActiveIcon, DownloadIcon } from "@/ui/icons";
 import { usePlayerSelector } from "../../../player/playerStore";
 import {
   cancelDownload,
@@ -68,7 +68,7 @@ export function DownloadButton() {
         aria-label={label}
       >
         {isReady ? (
-          <CheckActiveIcon size={19} aria-hidden="true" />
+          <DownloadActiveIcon size={19} aria-hidden="true" />
         ) : isDownloading && progress !== null ? (
           <ProgressRing progress={progress} />
         ) : isDownloading ? (

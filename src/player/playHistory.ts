@@ -3,7 +3,7 @@ import type { Track } from "../datasource/types";
 import { logInternalWarn } from "../internal/logging";
 import { getAppSetting, setAppSetting } from "../internal/appSettings";
 
-const STORAGE_KEY = "zuno.play-history.v1";
+const STORAGE_KEY = "ytm-offline.play-history.v1";
 
 /** Roughly a month of heavy listening. Trimmed oldest-first. */
 const MAX_ENTRIES = 500;

@@ -20,11 +20,11 @@ function equal(actual: unknown, expected: unknown, message: string): void {
   check(actual === expected, `${message}: expected ${String(expected)}, got ${String(actual)}`);
 }
 
-const { parseZunoJson, parseM3u, sanitizeFileName } = __parseForTest;
+const { parseYtmOfflineJson, parseM3u, sanitizeFileName } = __parseForTest;
 
-// --- Zuno JSON round trip -------------------------------------------------
+// --- YTM Offline JSON round trip -----------------------------------------
 const exported = JSON.stringify({
-  format: "zuno-playlist",
+  format: "ytm-offline-playlist",
   version: 1,
   title: "Late night",
   tracks: [
@@ -33,7 +33,7 @@ const exported = JSON.stringify({
   ],
 });
 
-const parsed = parseZunoJson(exported);
+const parsed = parseYtmOfflineJson(exported);
 check(parsed !== null, "a valid export parses");
 equal(parsed?.title, "Late night", "title survives the round trip");
 equal(parsed?.tracks.length, 2, "every track survives");
@@ -42,16 +42,16 @@ equal(parsed?.tracks[0].source, "youtube", "no local path means a remote track")
 
 // Entries without an id cannot be played, so they are dropped rather than half-imported.
 const withJunk = JSON.stringify({
-  format: "zuno-playlist",
+  format: "ytm-offline-playlist",
   version: 1,
   title: "T",
   tracks: [{ title: "no id" }, { id: "ok", title: "Fine", artist: "C" }],
 });
-equal(parseZunoJson(withJunk)?.tracks.length, 1, "entries without an id are dropped");
+equal(parseYtmOfflineJson(withJunk)?.tracks.length, 1, "entries without an id are dropped");
 
-// Anything not written by Zuno is refused rather than silently producing an empty playlist.
-equal(parseZunoJson(JSON.stringify({ format: "spotify", tracks: [] })), null, "foreign formats refused");
-equal(parseZunoJson(JSON.stringify({ format: "zuno-playlist" })), null, "missing tracks refused");
+// Foreign formats are refused rather than silently producing an empty playlist.
+equal(parseYtmOfflineJson(JSON.stringify({ format: "spotify", tracks: [] })), null, "foreign formats refused");
+equal(parseYtmOfflineJson(JSON.stringify({ format: "ytm-offline-playlist" })), null, "missing tracks refused");
 
 // --- M3U ------------------------------------------------------------------
 const m3u = [

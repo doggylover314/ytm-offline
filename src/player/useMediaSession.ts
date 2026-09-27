@@ -80,7 +80,7 @@ export function useMediaSession(
   // The browser `mediaSession` bridge must stay off everywhere a native session exists:
   // WebView2, WKWebView and WebKitGTK all bridge it to SMTC / MPNowPlayingInfoCenter / MPRIS on
   // their own, so enabling it too produces a second now-playing entry and double-fired media
-  // keys. On Linux this also means turning the setting off hides Zuno from system media
+  // keys. On Linux this also means turning the setting off hides the app from system media
   // controls entirely, rather than falling back to the browser bridge.
   const mediaSessionEnabled = !usesNativeMediaSession && linuxMediaSession;
   // ponytail: turning the toggle off just stops sending updates — the MPRIS entry freezes at

@@ -9,6 +9,7 @@ import { readSessionRestoreEnabled } from "../ui/settings/sessionRestore";
 import {
   hydrateOfflineStore,
   setOfflineStreamResolver,
+  setOfflineLyricsResolver,
   startOfflineProgressFeed,
 } from "./offlineStore";
 
@@ -35,6 +36,7 @@ setOfflineStreamResolver((track, quality) => {
   if (!resolver) throw new Error("Downloads are unavailable for this source.");
   return resolver.call(dataSource, track, quality);
 });
+setOfflineLyricsResolver((track) => dataSource.getLyrics(track));
 void hydrateOfflineStore();
 startOfflineProgressFeed();
 

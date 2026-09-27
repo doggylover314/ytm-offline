@@ -15,6 +15,7 @@ import type { LibraryController } from "../../player/LibraryController";
 import type { PlayerControllerActions } from "../../player/playerStore";
 import { logInternalError } from "../../internal/logging";
 import { removeAllDownloads, useOfflineState } from "../../player/offlineStore";
+import { disablePlaylistSync, syncPlaylist, useSyncedPlaylists } from "../../player/playlistSync";
 import { BrowseShelves } from "../components/BrowseShelves";
 import { TrackRow } from "../components/TrackRow";
 import { useTrackContextMenu } from "../components/TrackContextMenu";
@@ -78,6 +79,7 @@ export function BrowsePage({
   const target: BrowseTarget = drillDown[drillDown.length - 1]
     ?? (surface === "downloads" ? "explore" : surface);
   const offline = useOfflineState();
+  const syncedPlaylists = useSyncedPlaylists();
   const downloads = useMemo(
     () => Object.values(offline.entries).sort((left, right) => right.downloadedAt - left.downloadedAt),
     [offline.entries],
@@ -146,7 +148,7 @@ export function BrowsePage({
             {drillDown[drillDown.length - 1]?.title ?? (isDownloads ? "Downloads" : "Browse")}
           </h1>
         </div>
-        <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Browse feed">
+        {!isDownloads && <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Browse feed">
           {SURFACES.map((item) => (
             <button
               key={item.value}
@@ -168,8 +170,24 @@ export function BrowsePage({
               {item.label}
             </button>
           ))}
-        </div>
+        </div>}
       </header>
+
+      {isDownloads && Object.values(syncedPlaylists).length > 0 && (
+        <section className="flex flex-col gap-2" aria-label="Synced playlists">
+          <h2 className="text-base font-semibold text-foreground">Synced playlists</h2>
+          {Object.values(syncedPlaylists).map((entry) => (
+            <div key={entry.playlist.id} className="flex items-center gap-3 rounded-xl bg-card px-4 py-3">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium text-foreground">{entry.playlist.title}</span>
+                <span className="block text-xs text-muted-foreground">{entry.error ?? (entry.syncing ? "Syncing…" : entry.lastSyncedAt ? `Last synced ${new Date(entry.lastSyncedAt).toLocaleString()}` : "Waiting to sync")}</span>
+              </span>
+              <button type="button" className="rounded-lg px-3 py-1.5 text-xs text-foreground hover:bg-muted disabled:opacity-50" disabled={entry.syncing} onClick={() => void syncPlaylist(entry.playlist, libraryController)} aria-label={`Sync ${entry.playlist.title} now`}>Sync now</button>
+              <button type="button" className="rounded-lg px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted" onClick={() => void disablePlaylistSync(entry.playlist.id)} aria-label={`Stop syncing ${entry.playlist.title}`}>Remove</button>
+            </div>
+          ))}
+        </section>
+      )}
 
       {isDownloads ? (
         downloads.length === 0 && inFlight.length === 0 ? (
@@ -201,7 +219,7 @@ export function BrowsePage({
                 type="button"
                 onClick={() => {
                   if (confirmRemoveAll) {
-                    void removeAllDownloads();
+                    void Promise.all(Object.keys(syncedPlaylists).map(disablePlaylistSync)).then(removeAllDownloads);
                     setConfirmRemoveAll(false);
                     return;
                   }

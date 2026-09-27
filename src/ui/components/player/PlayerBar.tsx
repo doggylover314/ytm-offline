@@ -13,7 +13,6 @@ import { VolumeControl } from "./VolumeControl";
 import { LyricsButton } from "./LyricsButton";
 import {
   useCompactPlayerBar,
-  useExtraPlayerControlsAlwaysVisible,
 } from "../../settings/playerControls";
 
 interface PlayerBarProps {
@@ -142,7 +141,6 @@ export function PlayerBar({ onToggleLyrics, onToggleQueue, isQueueOpen, onConnec
     }
   };
 
-  const extraControlsAlwaysVisible = useExtraPlayerControlsAlwaysVisible();
   const compactPlayerBar = useCompactPlayerBar();
 
 
@@ -193,7 +191,7 @@ export function PlayerBar({ onToggleLyrics, onToggleQueue, isQueueOpen, onConnec
           {/* Compact: the seek bar tucks under the controls, in the centre column only, so
               the bar keeps one row of height and the transport stays the anchor. */}
           <div className="flex flex-col items-center gap-1">
-            <PlaybackControls extraControlsAlwaysVisible={extraControlsAlwaysVisible} />
+            <PlaybackControls extraControlsAlwaysVisible />
             {compactPlayerBar && (
               <div className="w-full min-w-[22rem]">
                 <SeekBar />
@@ -202,13 +200,7 @@ export function PlayerBar({ onToggleLyrics, onToggleQueue, isQueueOpen, onConnec
           </div>
 
           <div className="flex min-w-0 items-center justify-end gap-1">
-            <div
-              className={cn(
-                "flex items-center gap-1 transition-opacity",
-                !extraControlsAlwaysVisible &&
-                  "opacity-0 focus-within:opacity-100 group-hover/playerbar:opacity-100",
-              )}
-            >
+            <div className="flex items-center gap-1">
               <LyricsButton onToggle={onToggleLyrics} />
 
               <button

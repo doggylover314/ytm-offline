@@ -13,6 +13,7 @@ import {
 import { logInternalDebug } from "../../internal/logging";
 import { tauriFetch } from "../../datasource/youtube/tauriFetch";
 import { LOCAL_ARTWORK_PREFIX, LOCAL_IMAGE_PREFIX } from "../../player/localPlaylists";
+import { OFFLINE_ARTWORK_PREFIX } from "../../player/offlineStore";
 
 const ARTWORK_RETRY_DELAYS_MS = [500, 1500];
 
@@ -88,7 +89,8 @@ export function TrackArtwork({
   // proxy effect below reads them through Rust instead.
   const isEmbeddedArtwork = Boolean(artworkUrl?.startsWith(LOCAL_ARTWORK_PREFIX));
   const isLocalImage = Boolean(artworkUrl?.startsWith(LOCAL_IMAGE_PREFIX));
-  const isLocalArtwork = isEmbeddedArtwork || isLocalImage;
+  const isOfflineArtwork = Boolean(artworkUrl?.startsWith(OFFLINE_ARTWORK_PREFIX));
+  const isLocalArtwork = isEmbeddedArtwork || isLocalImage || isOfflineArtwork;
   const artworkCandidates = useMemo(() => {
     if (!artworkUrl?.trim()) return [];
     const cached = cacheKey ? getResolvedArtworkUrl(cacheKey) : undefined;
@@ -191,7 +193,11 @@ export function TrackArtwork({
       // Embedded cover: read it out of the file's tags. Same cache, same object-URL budget,
       // same request sharing — only where the bytes come from differs.
       if (isLocalArtwork) {
-        const artwork = isLocalImage
+        const artwork = isOfflineArtwork
+          ? await invoke<{ mimeType: string; dataBase64: string } | null>("offline_artwork_read", {
+            trackId: artworkUrl.slice(OFFLINE_ARTWORK_PREFIX.length),
+          })
+          : isLocalImage
           ? await invoke<{ mimeType: string; dataBase64: string }>("read_image_file", {
             path: artworkUrl.slice(LOCAL_IMAGE_PREFIX.length),
           })
@@ -224,6 +230,7 @@ export function TrackArtwork({
     cacheKey,
     isLocalArtwork,
     isLocalImage,
+    isOfflineArtwork,
     preferProxy,
     sizeBucket,
     proxiedArtworkUrl,

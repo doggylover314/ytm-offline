@@ -17,9 +17,9 @@ body:
   - type: input
     id: version
     attributes:
-      label: Zuno version
+      label: YTM Offline version
       description: Settings → About, or the installer filename.
-      placeholder: "1.2.1"
+      placeholder: "1.4.0"
     validations:
       required: true
 
@@ -28,9 +28,8 @@ body:
     attributes:
       label: OS
       options:
-        - Windows
-        - macOS
-        - Linux
+        - Fedora Linux
+        - Other Linux
     validations:
       required: true
 
@@ -40,7 +39,5 @@ body:
       label: Log
       description: |
         `current.log` from the log directory — it usually says what failed.
-        Windows: `%LOCALAPPDATA%\com.zuno.desktop\logs`
-        macOS: `~/Library/Logs/com.zuno.desktop`
-        Linux: `~/.local/share/com.zuno.desktop/logs`
+        Linux: `~/.local/share/io.github.doggylover314.ytmoffline/logs`
       render: text

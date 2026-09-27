@@ -1,12 +1,12 @@
 name: Feature request
-description: Suggest something Zuno should do
+description: Suggest something YTM Offline should do
 labels: [enhancement]
 body:
   - type: textarea
     id: problem
     attributes:
       label: The problem
-      description: What are you trying to do that Zuno makes hard or impossible today?
+      description: What are you trying to do that YTM Offline makes hard or impossible today?
     validations:
       required: true
 
