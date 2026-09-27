@@ -11,3 +11,9 @@
 # libopus, or when the crate stops vendoring one.
 [env]
 CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+
+# On Linux `audiopus_sys` links libopus dynamically by default, which either fails to link
+# (no system libopus) or makes the packaged app depend on one the .deb/.rpm never declares.
+# Static linking builds the vendored copy with cmake and bakes it in.
+LIBOPUS_STATIC = "1"
+CMAKE_TOOLCHAIN_FILE = { value = "cmake-install-lib.cmake", relative = true }
