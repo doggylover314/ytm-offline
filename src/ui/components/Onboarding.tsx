@@ -355,7 +355,7 @@ interface OnboardingWelcomeProps {
 export function OnboardingWelcome({ onSignIn, onContinue, isSigningIn }: OnboardingWelcomeProps) {
   return (
     <div
-      className="fixed inset-0 z-[95] grid place-items-center bg-background"
+      className="fixed inset-x-0 bottom-0 top-[var(--titlebar-height)] z-[95] grid place-items-center bg-background"
       role="dialog"
       aria-modal="true"
       aria-labelledby="welcome-title"
@@ -395,7 +395,7 @@ interface KeychainNoticeProps {
 export function KeychainNotice({ onContinue }: KeychainNoticeProps) {
   return (
     <div
-      className="fixed inset-0 z-[95] grid place-items-center bg-background"
+      className="fixed inset-x-0 bottom-0 top-[var(--titlebar-height)] z-[95] grid place-items-center bg-background"
       role="dialog"
       aria-modal="true"
       aria-labelledby="keychain-title"

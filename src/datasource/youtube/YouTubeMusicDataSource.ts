@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 /*
  * Statically imported, deliberately.
  *
@@ -306,9 +305,6 @@ type LibraryResponses = {
 };
 
 const LIKED_SONGS_PLAYLIST_ID = "LM";
-/** Everything a browse shelf can meaningfully hold. */
-/** Must match YOUTUBE_LOGIN_WINDOW in src-tauri/src/lib.rs; cancelling closes this window. */
-const YOUTUBE_LOGIN_WINDOW_LABEL = "youtube-music-login";
 
 /** Mirrors `SignInResult` in src-tauri/src/lib.rs. */
 interface SignInResult {
@@ -3091,18 +3087,14 @@ export class YouTubeMusicDataSource extends DataSource {
   }
 
   /**
-   * Closes the sign-in window, which is what the backend's poll loop treats as a cancellation.
-   *
-   * Silent when the window is already gone: that is the ordinary case of cancelling just as the
-   * sign-in completed, and it is not worth an error.
+   * Tells the backend to stop waiting for the sign-in window and closes it. The pending
+   * `signIn` call then rejects with a cancellation.
    */
   async cancelSignIn(): Promise<void> {
-    const loginWindow = await WebviewWindow.getByLabel(YOUTUBE_LOGIN_WINDOW_LABEL);
-    if (!loginWindow) return;
     try {
-      await loginWindow.close();
+      await invoke("cancel_youtube_music_sign_in");
     } catch (error) {
-      logInternalWarn("YouTubeMusicDataSource.cancelSignIn close failed", {
+      logInternalWarn("YouTubeMusicDataSource.cancelSignIn failed", {
         error: error instanceof Error ? error.message : String(error),
       });
     }

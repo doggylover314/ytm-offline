@@ -138,6 +138,8 @@ export class LibraryController {
 
   /** Which flow `setAuthStage` is reporting for; the two share every stage but the first. */
   private activeAuthFlow: AuthFlow = "sign-in";
+  /** Bumped per sign-in and by cancel, so a superseded attempt cannot touch the state. */
+  private signInAttempt = 0;
   private dislikedTrackIds: Set<string> = readDislikedTrackIds();
   private sessionRecoveryPromise: Promise<void> | null = null;
   private lastSessionRecoveryAt = 0;
@@ -302,6 +304,7 @@ export class LibraryController {
       authProgress: { flow: "sign-in", stage: "browser", attempt: 1, attemptCount: 1 },
       error: null,
     });
+    const attempt = ++this.signInAttempt;
     try {
       await this.dataSource.signIn(
         (authPrompt) => {
@@ -313,10 +316,13 @@ export class LibraryController {
         },
         (stage) => this.setAuthStage(stage),
       );
+      if (attempt !== this.signInAttempt) return;
       logInternalInfo("LibraryController.signIn authentication complete");
       await this.refreshAfterSignIn();
       logInternalInfo("LibraryController.signIn refresh complete");
     } catch (error) {
+      // A cancelled attempt already put the state back; its late rejection changes nothing.
+      if (attempt !== this.signInAttempt) return;
       /*
        * Cancelling is not a failure. The backend reports it the same way as any other error,
        * so without this the user who pressed Cancel is told the sign-in "failed" and left on an
@@ -331,19 +337,20 @@ export class LibraryController {
     } finally {
       // Cleared on every exit, success or failure: a stale stage would leave the overlay
       // describing work that is no longer running.
-      this.setState({ authProgress: null });
+      if (attempt === this.signInAttempt) this.setState({ authProgress: null });
     }
   }
 
   /**
    * Backs out of a sign-in that is still waiting on the browser window.
    *
-   * Closing that window is the whole mechanism: the backend polls for it and reports a
-   * cancellation within a second of it disappearing, which unwinds `signIn` through the normal
-   * path. Nothing here has to reach into that flow and unpick its state.
+   * The state goes back to signed out at once rather than waiting for the backend to notice:
+   * if the backend is slow to unwind, the overlay must not be left stuck on screen.
    */
   async cancelSignIn(): Promise<void> {
     logInternalInfo("LibraryController.cancelSignIn");
+    this.signInAttempt += 1;
+    this.setState({ status: "signed-out", authPrompt: null, authProgress: null, error: null });
     await this.dataSource.cancelSignIn?.();
   }
 

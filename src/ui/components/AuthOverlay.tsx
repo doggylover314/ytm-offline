@@ -104,20 +104,16 @@ export function AuthOverlay({ progress, onCancel }: AuthOverlayProps) {
   const activeIndex = stages.findIndex((stage) => stage.id === progress.stage);
   const isRetrying = progress.attemptCount > 1 && progress.attempt > 1;
   /*
-   * Offered only while the browser step is running.
-   *
-   * This overlay sits above the title bar, so for as long as it is up the window controls are
-   * unreachable — and the browser step waits on a person, for up to five minutes. Without a way
-   * out, a user who changed their mind cannot even close the app. Every other step, in both
-   * flows, takes seconds and is mid-transaction: cancelling would leave a half-applied session.
+   * Offered only while the browser step is running: that step waits on a person, for up to
+   * five minutes. Every other step, in both flows, takes seconds and is mid-transaction, so
+   * cancelling would leave a half-applied session.
    */
   const canCancel = progress.stage === "browser";
 
   return (
     <motion.div
-      /* Opaque: this covers the whole app, title bar included. Rounded to the window so it
-         follows the corner cutout; the variable is 0 when maximized or on Linux. */
-      className="fixed inset-0 z-[95] grid place-items-center overflow-hidden rounded-[var(--window-radius)] bg-background"
+      /* Opaque, covering everything below the title bar so the window buttons stay usable. */
+      className="fixed inset-x-0 bottom-0 top-[var(--titlebar-height)] z-[95] grid place-items-center overflow-hidden bg-background"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}

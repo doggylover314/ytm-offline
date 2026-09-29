@@ -2362,6 +2362,33 @@ struct SignInResult {
     slot_id: String,
 }
 
+/// Set by `cancel_youtube_music_sign_in`; the interactive sign-in loop checks it every poll.
+static SIGN_IN_CANCELLED: AtomicBool = AtomicBool::new(false);
+
+/// Reads the login window's session without letting a stuck read stall the sign-in.
+///
+/// Reading cookies from a webview that is being torn down can wait forever on WebKitGTK, which
+/// used to leave the sign-in hanging with no way out once the user closed the window.
+async fn harvest_session_cookie_bounded(window: &tauri::WebviewWindow) -> Option<String> {
+    let window = window.clone();
+    let read = tauri::async_runtime::spawn_blocking(move || harvest_session_cookie(&window));
+    match tokio::time::timeout(Duration::from_secs(3), read).await {
+        Ok(Ok(Ok(cookie))) => cookie,
+        _ => None,
+    }
+}
+
+/// Backs out of an interactive sign-in: the poll loop stops within a second and reports a
+/// cancellation, and the login window closes.
+#[tauri::command]
+fn cancel_youtube_music_sign_in(app: tauri::AppHandle) {
+    eprintln!("[internal][tauri][info] cancel_youtube_music_sign_in");
+    SIGN_IN_CANCELLED.store(true, Ordering::SeqCst);
+    if let Some(window) = app.get_webview_window(YOUTUBE_LOGIN_WINDOW) {
+        let _ = window.close();
+    }
+}
+
 #[tauri::command]
 async fn sign_in_youtube_music(
     app: tauri::AppHandle,
@@ -2380,6 +2407,7 @@ async fn sign_in_youtube_music(
      * `upsert_signed_in_account` below finds it by identity and this candidate partition goes
      * unused — cleaned up rather than left as an orphaned directory.
      */
+    SIGN_IN_CANCELLED.store(false, Ordering::SeqCst);
     let candidate_slot_id = generate_slot_id();
     let window = build_login_window(&app, true, Arc::new(AtomicBool::new(false)), &candidate_slot_id)?;
     eprintln!("[internal][tauri][info] sign_in_youtube_music login window created");
@@ -2393,7 +2421,20 @@ async fn sign_in_youtube_music(
     eprintln!("[internal][tauri][info] sign_in_youtube_music navigated to Google sign-in");
 
     for poll in 1..=300 {
-        if let Some(cookie_header) = harvest_session_cookie(&window)? {
+        // Checked before touching the window: reading from one that is closing can hang.
+        if SIGN_IN_CANCELLED.load(Ordering::SeqCst) || app.get_webview_window(YOUTUBE_LOGIN_WINDOW).is_none() {
+            eprintln!(
+                "[internal][tauri][warn] sign_in_youtube_music cancelled poll={}",
+                poll
+            );
+            let _ = window.close();
+            remove_login_partition(&app, &candidate_slot_id);
+            return Err(CommandError {
+                message: "YouTube Music sign-in was cancelled.".to_string(),
+            });
+        }
+
+        if let Some(cookie_header) = harvest_session_cookie_bounded(&window).await {
             let (slot_id, account_changed, reused_existing_slot) = {
                 let _guard = account_lock.0.lock().map_err(|_| CommandError {
                     message: "account store lock unavailable".to_string(),
@@ -2427,17 +2468,7 @@ async fn sign_in_youtube_music(
             });
         }
 
-        if app.get_webview_window(YOUTUBE_LOGIN_WINDOW).is_none() {
-            eprintln!(
-                "[internal][tauri][warn] sign_in_youtube_music cancelled poll={}",
-                poll
-            );
-            remove_login_partition(&app, &candidate_slot_id);
-            return Err(CommandError {
-                message: "YouTube Music sign-in was cancelled.".to_string(),
-            });
-        }
-        thread::sleep(Duration::from_secs(1));
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
     let _ = window.close();
@@ -5751,6 +5782,7 @@ pub fn run() {
             proxy_http_request,
             load_youtube_music_cookie,
             sign_in_youtube_music,
+            cancel_youtube_music_sign_in,
             refresh_youtube_music_cookie,
             delete_youtube_music_cookie,
             list_youtube_music_accounts,
