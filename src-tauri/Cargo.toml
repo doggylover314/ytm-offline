@@ -1,6 +1,6 @@
 [package]
 name = "ytm-offline"
-version = "1.4.0"
+version = "1.0.0"
 description = "YTM Offline - a lightweight Linux music client"
 edition = "2021"
 
