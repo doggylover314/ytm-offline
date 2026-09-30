@@ -12,6 +12,7 @@ import { ClientType, Innertube, Platform, Types, YTNodes } from "youtubei.js";
 import { getAppSetting, removeAppSetting, setAppSetting } from "../../internal/appSettings";
 import { createSerialQueue } from "../../internal/asyncQueue";
 import { clearCache, getCachedJson, setCachedJson } from "../../internal/cache";
+import { KindedError, errorKind, errorMessage } from "../../internal/errors";
 import { logInternalDebug, logInternalError, logInternalInfo, logInternalWarn } from "../../internal/logging";
 import { mintPoToken, warmPoToken } from "./poToken";
 import { AuthExpiredError, DataSource, type StreamData } from "../DataSource";
@@ -2944,7 +2945,7 @@ export class YouTubeMusicDataSource extends DataSource {
     setAuthConfirmedHandler(handler);
   }
 
-  async restoreSession(): Promise<boolean> {
+  async restoreSession(): Promise<boolean | "offline"> {
     logInternalInfo("YouTubeMusicDataSource.restoreSession start");
     try {
       this.musicCookie = await invoke<string | null>("load_youtube_music_cookie");
@@ -2975,6 +2976,9 @@ export class YouTubeMusicDataSource extends DataSource {
       return true;
     } catch (error) {
       logInternalError("YouTubeMusicDataSource.restoreSession failed", error);
+      // The credential is there and only the network is not: that is being offline, not
+      // being signed out.
+      if (this.musicCookie && errorKind(error) === "network") return "offline";
       return false;
     }
   }
@@ -5583,6 +5587,7 @@ export class YouTubeMusicDataSource extends DataSource {
   ): Promise<{ url: string; mimeType: string; cookie?: string }> {
     let streamUrl: string | null = null;
     let streamMimeType = "audio/mp4";
+    const failures: unknown[] = [];
 
     /*
      * The walk itself holds no policy — the order is handed in. Whichever client comes first is
@@ -5598,6 +5603,15 @@ export class YouTubeMusicDataSource extends DataSource {
           const poToken =
             label === "download" ? await this.attestForTrack(yt, track.id) : undefined;
           const info = await yt.getBasicInfo(track.id, poToken ? { po_token: poToken } : undefined);
+          // YouTube says outright when it will not play a track; that is not worth retrying.
+          const playability = (info as { playability_status?: { status?: string; reason?: string } })
+            .playability_status;
+          if (playability?.status && playability.status !== "OK") {
+            throw new KindedError(
+              "unavailable",
+              playability.reason || `YouTube will not play this track (${playability.status}).`,
+            );
+          }
           /*
            * MP4 preferred, any audio accepted.
            *
@@ -5682,6 +5696,7 @@ export class YouTubeMusicDataSource extends DataSource {
         }
         break;
       } catch (error) {
+        failures.push(error);
         logInternalWarn("YouTubeMusicDataSource.getStreamData client failed", {
           trackId: track.id,
           client: label,
@@ -5691,7 +5706,21 @@ export class YouTubeMusicDataSource extends DataSource {
     }
 
     if (!streamUrl) {
-      throw new Error("Unable to resolve a playable audio stream.");
+      /*
+       * Says why, so the download queue can tell a lost connection (wait and retry) from a
+       * track YouTube refuses to play (stop trying). Unavailable only when every client said
+       * so: a track one client cannot see is often fine through another.
+       */
+      const kinds = failures.map(errorKind);
+      if (kinds.includes("network")) {
+        throw new KindedError("network", `Could not reach YouTube: ${errorMessage(failures[kinds.indexOf("network")])}`);
+      }
+      if (kinds.length > 0 && kinds.every((kind) => kind === "unavailable")) {
+        throw new KindedError("unavailable", errorMessage(failures[0]));
+      }
+      throw new Error(
+        `Unable to resolve a playable audio stream${failures.length ? `: ${errorMessage(failures[0])}` : "."}`,
+      );
     }
 
     return {

@@ -423,7 +423,7 @@ export function SearchResultsPage({
   const songsSection = scopedResults.tracks.length > 0 && (
     <section className="flex min-w-0 flex-col gap-3">
       <h2 className="text-xl font-semibold">Songs</h2>
-      <div className="flex flex-col gap-0.5" data-onboarding="search-results">
+      <div className="flex flex-col gap-0.5">
         {scopedResults.tracks.map((track) => {
           const index = flatItems.findIndex(
             (item) => item.kind === "track" && item.track.id === track.id,

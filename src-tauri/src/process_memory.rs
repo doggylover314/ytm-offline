@@ -32,6 +32,7 @@ pub struct MemoryReport {
     pub processes: Vec<ProcessMemory>,
 }
 
+#[cfg(target_os = "windows")]
 fn round(bytes: usize) -> f64 {
     (bytes as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0
 }

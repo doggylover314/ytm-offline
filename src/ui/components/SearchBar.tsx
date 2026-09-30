@@ -53,7 +53,6 @@ export function SearchBar({
       <button
         type="button"
         onClick={onOpen}
-        data-onboarding="search"
         className="group flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded bg-card px-3.5 text-left text-[15px] text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
         <SearchIcon size={20} className="shrink-0" />

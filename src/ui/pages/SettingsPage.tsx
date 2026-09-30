@@ -608,7 +608,6 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
 interface SettingsPageProps {
   libraryController: LibraryController;
   libraryState: LibraryState;
-  onRestartOnboarding: () => void;
   onSignIn: () => Promise<void>;
   onDeleteAllAppData: () => Promise<void>;
 }
@@ -616,7 +615,6 @@ interface SettingsPageProps {
 export function SettingsPage({
   libraryController,
   libraryState,
-  onRestartOnboarding,
   onSignIn,
   onDeleteAllAppData,
 }: SettingsPageProps) {
@@ -1931,15 +1929,6 @@ export function SettingsPage({
               )}
             </SettingRow>
 
-            <SettingRow title="Quick start" description="Replay the guided introduction.">
-              {() => (
-                <button className={BUTTON_SECONDARY} type="button" onClick={onRestartOnboarding}>
-                  <RefreshIcon size={18} />
-                  Start onboarding
-                </button>
-              )}
-            </SettingRow>
-
             <SettingRow title="Project" description="Source code and issue tracker on GitHub.">
               {() => (
                 <>
@@ -1979,7 +1968,7 @@ export function SettingsPage({
 
             <SettingRow
               title="Delete all app data"
-              description="Reset settings, cache, account, queue, tabs, onboarding, and local data."
+              description="Reset settings, cache, account, queue, tabs, and local data."
               below={resetSettingsError && <p className={ROW_ERROR}>{resetSettingsError}</p>}
             >
               {() => (

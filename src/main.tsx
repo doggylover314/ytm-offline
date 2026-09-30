@@ -6,6 +6,7 @@ import "./ui/styles/global.css";
 import { logInternalError, logInternalInfo } from "./internal/logging";
 import { applyPaperPcMode, hydratePaperPcMode } from "./ui/settings/paperPcMode";
 import { applyTheme } from "./ui/settings/theme";
+import { startConnectivityMonitor } from "./internal/connectivity";
 import {
   applyNativeWindowControls,
   hydrateWindowControlSettings,
@@ -50,6 +51,7 @@ applyPlatformAttributes();
 void detectTilingWindowManager();
 // Before React mounts: a late theme apply shows a flash of the wrong palette.
 applyTheme();
+startConnectivityMonitor();
 applyAccentColor();
 applyPaperPcMode();
 applyRenderEffects();

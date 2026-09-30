@@ -24,6 +24,8 @@ import type {
   TrackRating,
 } from "../datasource/types";
 import { logInternalError, logInternalInfo } from "../internal/logging";
+import { isNetworkError } from "../internal/errors";
+import { isOnline, subscribeConnectivity } from "../internal/connectivity";
 import { getAppSetting, setAppSetting } from "../internal/appSettings";
 import { forgetTrackInPlaylist, rememberTrackInPlaylist } from "./playlistMembership";
 import {
@@ -67,6 +69,11 @@ export interface LibraryState {
    * connection while every action against it silently failed.
    */
   sessionConfirmedAt: number | null;
+  /**
+   * Signed in, but YouTube cannot be reached. The library shown is the one saved on disk, and
+   * the controller reconnects by itself when the network comes back.
+   */
+  offline: boolean;
 }
 
 type Listener = () => void;
@@ -134,7 +141,9 @@ export class LibraryController {
     pendingLikeTrackIds: new Set(),
     error: null,
     sessionConfirmedAt: null,
+    offline: false,
   };
+  private watchingConnectivity = false;
 
   /** Which flow `setAuthStage` is reporting for; the two share every stage but the first. */
   private activeAuthFlow: AuthFlow = "sign-in";
@@ -249,11 +258,26 @@ export class LibraryController {
     });
   }
 
+  /** Works from the library on disk until YouTube can be reached again. */
+  private goOffline(): void {
+    logInternalInfo("LibraryController offline");
+    this.setState({ status: "ready", offline: true, authPrompt: null, error: null });
+    if (this.watchingConnectivity) return;
+    this.watchingConnectivity = true;
+    subscribeConnectivity(() => {
+      if (isOnline() && this.state.offline) void this.recoverConnection();
+    });
+  }
+
   async recoverConnection(): Promise<void> {
     if (this.state.status === "authorizing") return;
 
     try {
       const restored = await this.dataSource.restoreSession?.();
+      if (restored === "offline") {
+        this.goOffline();
+        return;
+      }
       if (restored) {
         await this.refresh();
         return;
@@ -282,8 +306,13 @@ export class LibraryController {
        * sign-in webview's own Google session is still perfectly alive — so the durable record is
        * asked before the user is. Costs a hidden window on a path that was otherwise a prompt.
        */
-      const restored = await this.dataSource.restoreSession?.()
-        || await this.dataSource.refreshSession?.();
+      const stored = await this.dataSource.restoreSession?.();
+      if (stored === "offline") {
+        this.goOffline();
+        return;
+      }
+      // The silent renewal needs the network; offline it can only fail and read as signed out.
+      const restored = stored || (isOnline() && await this.dataSource.refreshSession?.());
       if (!restored) {
         this.setState({ status: "signed-out", authPrompt: null, error: null });
         return;
@@ -500,12 +529,17 @@ export class LibraryController {
         return;
       }
       if (options.suppressFailure) throw error;
+      // No network is not a failure of the library: keep what is on disk and reconnect later.
+      if (isNetworkError(error)) {
+        this.goOffline();
+        return;
+      }
       this.setFailure("Unable to load your YouTube Music library.", error);
     }
   }
 
   private applyLibrary(library: LibrarySnapshot): void {
-    this.setState({ status: "ready", library, authPrompt: null, error: null });
+    this.setState({ status: "ready", library, authPrompt: null, error: null, offline: false });
     logInternalInfo("LibraryController.refresh success", {
       albumCount: library.albums.length,
       playlistCount: library.playlists.length,

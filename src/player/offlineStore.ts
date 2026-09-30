@@ -4,31 +4,65 @@ import { listen } from "@tauri-apps/api/event";
 import type { Lyrics, Track } from "../datasource/types";
 import { tauriFetch } from "../datasource/youtube/tauriFetch";
 import { toBase64 } from "../internal/base64";
-import { logInternalError, logInternalInfo, logInternalWarn } from "../internal/logging";
-import { getAppSetting, setAppSetting } from "../internal/appSettings";
+import { logInternalInfo, logInternalWarn } from "../internal/logging";
+import { getAppSetting, removeAppSetting } from "../internal/appSettings";
 import { getDownloadQuality, type AudioQuality } from "../internal/audioQuality";
+import { errorKind, errorMessage, type ErrorKind } from "../internal/errors";
+import { isOnline, reportNetworkFailure, subscribeConnectivity, whenOnline } from "../internal/connectivity";
+import { readDocument, saveDocument, saveDocumentNow } from "../internal/documentStore";
 
-const MANIFEST_KEY = "ytm-offline.offline-manifest.v1";
-const MAX_BYTES_KEY = "ytm-offline.offline-max-bytes.v1";
-/**
- * Entries whose audio was deleted by a "start fresh" folder change and still has to be
- * downloaded again. Durable, so quitting before the queue drains does not lose the songs.
+/*
+ * The offline store: which songs are downloaded, and the queue of songs still to download.
+ *
+ * Both are kept in their own documents on disk (see documentStore.ts), so the queue survives the
+ * app quitting, the webview reloading after the machine wakes, and anything else short of the
+ * user deleting it. The backend does the transfers (offline_download.rs); this module decides
+ * what to download next and what to do when a download fails.
  */
-const REDOWNLOAD_KEY = "ytm-offline.offline-redownload.v1";
+
+const MANIFEST_DOCUMENT = "offline-manifest";
+const QUEUE_DOCUMENT = "offline-queue";
+/** Where the manifest lived before it had its own file. Read once, to migrate. */
+const LEGACY_MANIFEST_KEY = "ytm-offline.offline-manifest.v1";
+/** Songs a "start fresh" folder change still had to download, before the queue was durable. */
+const LEGACY_REDOWNLOAD_KEY = "ytm-offline.offline-redownload.v1";
+const MAX_BYTES_KEY = "ytm-offline.offline-max-bytes.v1";
 export const OFFLINE_ARTWORK_PREFIX = "ytm-offline-artwork:";
 
-/** Synced playlists are never evicted by an arbitrary default disk quota. */
+/** No limit unless the user sets one. */
 export const DEFAULT_OFFLINE_MAX_BYTES = Number.POSITIVE_INFINITY;
 
+/** Attempts before a song is marked as failed. */
+export const MAX_ATTEMPTS = 3;
+/** Wait before the next attempt, multiplied by the attempt number. */
+const RETRY_DELAY_MS = 30_000;
+/** Wait after a network failure, multiplied by how many there have been in a row. */
+const NETWORK_RETRY_DELAY_MS = 5_000;
 /**
- * One download at a time.
- *
- * Downloads compete with playback for the same connection, and a track that is buffering now
- * matters more than one being saved for later. Serial keeps that contention predictable.
+ * Network failures in a row that count as one attempt. The connectivity check usually pauses
+ * the queue long before this; it only matters when the network looks fine but one server keeps
+ * failing, which must not retry forever.
  */
-const DOWNLOAD_CONCURRENCY = 1;
+const NETWORK_FAILURES_PER_ATTEMPT = 4;
+/** Fresh URLs to try after a refused one before that counts as an attempt. */
+const EXPIRED_RETRIES = 2;
+/** A failed song is tried again by a sync this long after it failed (unless it is unplayable). */
+const FAILED_RETRY_AFTER_MS = 30 * 60_000;
+/** While downloads are paused for storage, how often to check whether the folder is back. */
+const STORAGE_RECHECK_MS = 60_000;
+const LYRICS_TIMEOUT_MS = 20_000;
+const MAX_ARTWORK_BYTES = 12 * 1024 * 1024;
 
 export type OfflineStatus = "absent" | "queued" | "downloading" | "ready" | "failed";
+export type PauseReason =
+  /** No internet connection. Resumes by itself. */
+  | "offline"
+  /** The download folder could not be written. Checked again every minute. */
+  | "storage"
+  /** The storage limit in Settings is reached. */
+  | "limit"
+  /** The download folder is being changed. */
+  | "moving";
 
 export interface OfflineEntry {
   track: Track;
@@ -38,244 +72,702 @@ export interface OfflineEntry {
   savedIndividually?: boolean;
   playlistIds?: string[];
   lyrics?: Lyrics;
+  /** The artwork's web address, kept so the local copy can be fetched again. */
+  remoteArtworkUrl?: string;
+  /** Artwork and lyrics are still to be fetched. */
+  metadataPending?: boolean;
+}
+
+/** Who wants a song downloaded. It stays while anyone does. */
+export interface DownloadOwners {
+  /** Saved on its own, from a download button. */
+  manual: boolean;
+  /** Synced playlists that contain it. */
+  playlists: string[];
+}
+
+export interface DownloadJob {
+  track: Track;
+  owners: DownloadOwners;
+  attempts: number;
+  networkFailures: number;
+  expiredRetries: number;
+  /** Not to be tried before this time (ms). */
+  notBefore: number;
+  failed: boolean;
+  failureKind: ErrorKind | null;
+  failedAt: number | null;
+  lastError: string | null;
+  /** Kept from an earlier copy of the song, when it is downloaded again. */
+  keep?: { lyrics?: Lyrics; remoteArtworkUrl?: string };
 }
 
 export interface OfflineState {
   entries: Record<string, OfflineEntry>;
-  /** 0-100 for the track currently downloading. Absent when the size is unknown. */
+  /** 0-100 for the song downloading now. Null before the size is known. */
   progress: number | null;
-  /** Track ids waiting their turn, in order. */
+  /** Songs waiting their turn, in order. */
   queued: string[];
-  /**
-   * Metadata for everything queued or downloading.
-   *
-   * Held in state rather than only in the worker's map because the Downloads list and the
-   * player bar both need to render a song that has no file yet — an id alone cannot be shown.
-   */
+  /** Everything queued or downloading, for lists that need to show a song with no file yet. */
   pending: Record<string, Track>;
   downloadingId: string | null;
+  /** Songs that gave up, with the reason. */
   failed: Record<string, string>;
   usedBytes: number;
+  paused: PauseReason | null;
+  /** What went wrong, for the storage pause. */
+  pauseMessage: string | null;
 }
 
 type Listener = () => void;
 
 const listeners = new Set<Listener>();
-let state: OfflineState = {
-  entries: {},
-  progress: null,
-  pending: {},
-  queued: [],
-  downloadingId: null,
-  failed: {},
-  usedBytes: 0,
-};
-let hydrated = false;
-let pumping = false;
-/** Set while the download folder is changing; the worker stops between downloads. */
-let paused = false;
-let idleWaiters: Array<() => void> = [];
+let entries: Record<string, OfflineEntry> = {};
+let usedBytes = 0;
+/** Insertion order is queue order. */
+const jobs = new Map<string, DownloadJob>();
+let downloadingId: string | null = null;
+let progress: number | null = null;
+let pause: { reason: PauseReason; message: string | null } | null = null;
+let state: OfflineState = derive();
 
-function emit(): void {
+let hydration: Promise<void> | null = null;
+let hydrated = false;
+const afterHydration: Array<() => void> = [];
+let pumping = false;
+let moving = false;
+let idleWaiters: Array<() => void> = [];
+let wakeTimer: number | null = null;
+let storageTimer: number | null = null;
+
+/* ── State ───────────────────────────────────────────────────────────────────────────────── */
+
+function derive(): OfflineState {
+  const queued: string[] = [];
+  const pending: Record<string, Track> = {};
+  const failed: Record<string, string> = {};
+  for (const [id, job] of jobs) {
+    if (job.failed) {
+      failed[id] = job.lastError ?? "Download failed";
+      continue;
+    }
+    pending[id] = job.track;
+    if (id !== downloadingId) queued.push(id);
+  }
+  return {
+    entries,
+    progress,
+    queued,
+    pending,
+    downloadingId,
+    failed,
+    usedBytes,
+    paused: pause?.reason ?? null,
+    pauseMessage: pause?.message ?? null,
+  };
+}
+
+function publish(): void {
+  state = derive();
   for (const listener of listeners) listener();
 }
 
-function asManifest(parsed: unknown): Record<string, OfflineEntry> | null {
-  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-    ? parsed as Record<string, OfflineEntry>
+function setEntries(next: Record<string, OfflineEntry>): void {
+  entries = next;
+  usedBytes = Object.values(next).reduce((total, entry) => total + (entry.byteLength || 0), 0);
+  saveDocument(MANIFEST_DOCUMENT, { version: 2, entries });
+  publish();
+}
+
+function saveQueue(): void {
+  saveDocument(QUEUE_DOCUMENT, { version: 2, jobs: [...jobs.values()] });
+}
+
+function setPause(reason: PauseReason | null, message: string | null = null): void {
+  if (pause?.reason === reason && pause?.message === message) return;
+  if (reason !== pause?.reason) logInternalInfo("offlineStore.pause", { reason, message });
+  pause = reason ? { reason, message } : null;
+  if (reason === "storage") {
+    storageTimer ??= window.setInterval(() => {
+      if (pause?.reason !== "storage") return;
+      setPause(null);
+      void pump();
+    }, STORAGE_RECHECK_MS);
+  } else if (storageTimer !== null) {
+    window.clearInterval(storageTimer);
+    storageTimer = null;
+  }
+  publish();
+}
+
+/* ── Owners ──────────────────────────────────────────────────────────────────────────────── */
+
+function withOwner(owners: DownloadOwners, playlistId?: string): DownloadOwners {
+  if (!playlistId) return owners.manual ? owners : { ...owners, manual: true };
+  return owners.playlists.includes(playlistId)
+    ? owners
+    : { ...owners, playlists: [...owners.playlists, playlistId] };
+}
+
+function hasOwners(owners: DownloadOwners): boolean {
+  return owners.manual || owners.playlists.length > 0;
+}
+
+function entryOwners(entry: OfflineEntry): DownloadOwners {
+  return { manual: entry.savedIndividually !== false, playlists: entry.playlistIds ?? [] };
+}
+
+function entryWithOwner(entry: OfflineEntry, playlistId?: string): OfflineEntry {
+  const owners = entryOwners(entry);
+  const next = withOwner(owners, playlistId);
+  if (next === owners && entry.savedIndividually !== undefined) return entry;
+  return { ...entry, savedIndividually: next.manual, playlistIds: next.playlists };
+}
+
+function newJob(track: Track, owners: DownloadOwners): DownloadJob {
+  return {
+    track,
+    owners,
+    attempts: 0,
+    networkFailures: 0,
+    expiredRetries: 0,
+    notBefore: 0,
+    failed: false,
+    failureKind: null,
+    failedAt: null,
+    lastError: null,
+  };
+}
+
+function resetJob(job: DownloadJob): DownloadJob {
+  return { ...newJob(job.track, job.owners), keep: job.keep };
+}
+
+function jobFromEntry(entry: OfflineEntry): DownloadJob {
+  return {
+    ...newJob(entry.track, entryOwners(entry)),
+    keep: { lyrics: entry.lyrics, remoteArtworkUrl: entry.remoteArtworkUrl },
+  };
+}
+
+/* ── Retry policy ────────────────────────────────────────────────────────────────────────── */
+
+export interface RetryPlan {
+  job: DownloadJob;
+  /** Stop the whole queue for this reason. */
+  pause?: PauseReason;
+  /** Let the songs behind it go first. */
+  moveToBack: boolean;
+}
+
+/** What to do with a job whose download just failed. Pure, so it can be checked. */
+export function planRetry(job: DownloadJob, kind: ErrorKind, message: string, now: number): RetryPlan {
+  switch (kind) {
+    case "network": {
+      const networkFailures = job.networkFailures + 1;
+      if (networkFailures < NETWORK_FAILURES_PER_ATTEMPT) {
+        return {
+          job: { ...job, networkFailures, lastError: message, notBefore: now + NETWORK_RETRY_DELAY_MS * networkFailures },
+          moveToBack: false,
+        };
+      }
+      return countAttempt({ ...job, networkFailures: 0 }, kind, message, now);
+    }
+    case "expired": {
+      const expiredRetries = job.expiredRetries + 1;
+      if (expiredRetries <= EXPIRED_RETRIES) {
+        return { job: { ...job, expiredRetries, lastError: message, notBefore: now }, moveToBack: false };
+      }
+      return countAttempt({ ...job, expiredRetries: 0 }, kind, message, now);
+    }
+    case "storage":
+      return { job: { ...job, lastError: message, notBefore: now }, pause: "storage", moveToBack: false };
+    case "unavailable":
+      return {
+        job: { ...job, attempts: MAX_ATTEMPTS, failed: true, failureKind: kind, failedAt: now, lastError: message },
+        moveToBack: true,
+      };
+    default:
+      return countAttempt(job, kind, message, now);
+  }
+}
+
+function countAttempt(job: DownloadJob, kind: ErrorKind, message: string, now: number): RetryPlan {
+  const attempts = job.attempts + 1;
+  if (attempts >= MAX_ATTEMPTS) {
+    return {
+      job: { ...job, attempts, failed: true, failureKind: kind, failedAt: now, lastError: message },
+      moveToBack: true,
+    };
+  }
+  return { job: { ...job, attempts, lastError: message, notBefore: now + RETRY_DELAY_MS * attempts }, moveToBack: true };
+}
+
+/** Whether a sync should try a failed song again. Unplayable songs only retry on request. */
+export function shouldRetryOnSync(job: DownloadJob, now: number): boolean {
+  if (!job.failed || job.failureKind === "unavailable") return false;
+  return now - (job.failedAt ?? 0) >= FAILED_RETRY_AFTER_MS;
+}
+
+/* ── Manifest reconciliation ─────────────────────────────────────────────────────────────── */
+
+/**
+ * Matches the manifest against what is actually on disk.
+ *
+ * Disk decides availability; the manifest decides what is known. An entry with no file is
+ * `missing` (to be downloaded again for whoever wanted it). A file with no entry is an orphan
+ * only when there was a manifest to be absent from: no manifest at all reads as a lost manifest
+ * rather than an empty library, and deleting the user's downloads on that guess cannot be undone.
+ */
+export function reconcileManifest(
+  manifest: Record<string, OfflineEntry>,
+  onDisk: ReadonlyArray<{ trackId: string; byteLength: number }>,
+): { entries: Record<string, OfflineEntry>; orphans: string[]; missing: OfflineEntry[] } {
+  const byId = new Map(onDisk.map((entry) => [entry.trackId, entry.byteLength]));
+  const present: Record<string, OfflineEntry> = {};
+  const missing: OfflineEntry[] = [];
+
+  for (const [trackId, entry] of Object.entries(manifest)) {
+    const byteLength = byId.get(trackId);
+    if (byteLength === undefined) {
+      missing.push(entry);
+      continue;
+    }
+    present[trackId] = { ...entry, byteLength };
+  }
+
+  const orphans = Object.keys(manifest).length === 0
+    ? []
+    : [...byId.keys()].filter((trackId) => !present[trackId]);
+  return { entries: present, orphans, missing };
+}
+
+/* ── Loading ─────────────────────────────────────────────────────────────────────────────── */
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
     : null;
 }
 
-function readManifest(): Record<string, OfflineEntry> {
+function readLocalJson(key: string): unknown {
   try {
-    return asManifest(JSON.parse(localStorage.getItem(MANIFEST_KEY) ?? "{}")) ?? {};
+    return JSON.parse(localStorage.getItem(key) ?? "null");
   } catch {
-    // A corrupt manifest is rebuilt from disk by reconcile() below.
-    return {};
+    return null;
+  }
+}
+
+function isTrack(value: unknown): value is Track {
+  const track = asRecord(value);
+  return Boolean(track && typeof track.id === "string" && track.id && typeof track.title === "string");
+}
+
+function sanitizeEntries(value: unknown): Record<string, OfflineEntry> {
+  const result: Record<string, OfflineEntry> = {};
+  for (const [id, raw] of Object.entries(asRecord(value) ?? {})) {
+    const entry = asRecord(raw);
+    if (!entry || !isTrack(entry.track) || entry.track.id !== id) continue;
+    result[id] = raw as OfflineEntry;
+  }
+  return result;
+}
+
+function sanitizeJob(raw: unknown): DownloadJob | null {
+  const job = asRecord(raw);
+  if (!job || !isTrack(job.track)) return null;
+  const owners = asRecord(job.owners);
+  const playlists = Array.isArray(owners?.playlists)
+    ? owners.playlists.filter((id): id is string => typeof id === "string")
+    : [];
+  const restored: DownloadJob = {
+    ...newJob(job.track, { manual: owners?.manual === true, playlists }),
+    attempts: typeof job.attempts === "number" ? job.attempts : 0,
+    failed: job.failed === true,
+    failureKind: typeof job.failureKind === "string" ? job.failureKind as ErrorKind : null,
+    failedAt: typeof job.failedAt === "number" ? job.failedAt : null,
+    lastError: typeof job.lastError === "string" ? job.lastError : null,
+    keep: asRecord(job.keep) ? job.keep as DownloadJob["keep"] : undefined,
+  };
+  // Waits and network counts belong to the run that set them; a new run starts clean.
+  return hasOwners(restored.owners) ? restored : null;
+}
+
+async function loadManifest(): Promise<Record<string, OfflineEntry>> {
+  const document = asRecord(await readDocument<unknown>(MANIFEST_DOCUMENT));
+  if (document) return sanitizeEntries(document.entries);
+
+  // Before 1.0 the manifest lived in the settings file and local storage. Either copy can be
+  // the survivor, so both are merged, then moved to the document and removed.
+  const legacy = {
+    ...sanitizeEntries(await getAppSetting<unknown>(LEGACY_MANIFEST_KEY)),
+    ...sanitizeEntries(readLocalJson(LEGACY_MANIFEST_KEY)),
+  };
+  if (Object.keys(legacy).length > 0) {
+    // Keep the old copies until the new one is safely written.
+    if (!await saveDocumentNow(MANIFEST_DOCUMENT, { version: 2, entries: legacy })) return legacy;
+  }
+  void removeAppSetting(LEGACY_MANIFEST_KEY);
+  try {
+    localStorage.removeItem(LEGACY_MANIFEST_KEY);
+  } catch {
+    // Nothing to clean up.
+  }
+  return legacy;
+}
+
+async function loadQueue(): Promise<DownloadJob[]> {
+  const document = asRecord(await readDocument<unknown>(QUEUE_DOCUMENT));
+  const stored = Array.isArray(document?.jobs) ? document.jobs : [];
+  const loaded = stored.map(sanitizeJob).filter((job): job is DownloadJob => job !== null);
+
+  const legacy = {
+    ...sanitizeEntries(await getAppSetting<unknown>(LEGACY_REDOWNLOAD_KEY)),
+    ...sanitizeEntries(readLocalJson(LEGACY_REDOWNLOAD_KEY)),
+  };
+  loaded.push(...Object.values(legacy).map(jobFromEntry));
+  if (Object.keys(legacy).length > 0 || document === null) {
+    void removeAppSetting(LEGACY_REDOWNLOAD_KEY);
+    try {
+      localStorage.removeItem(LEGACY_REDOWNLOAD_KEY);
+    } catch {
+      // Nothing to clean up.
+    }
+  }
+  return loaded;
+}
+
+/**
+ * Loads the manifest and the queue and starts downloading. Safe to call more than once.
+ *
+ * Changes requested before this finishes (a sync at launch, a click) wait for it, so they are
+ * applied on top of what was saved rather than being overwritten by it.
+ */
+export function hydrateOfflineStore(): Promise<void> {
+  hydration ??= hydrate();
+  return hydration;
+}
+
+async function hydrate(): Promise<void> {
+  const [manifest, storedJobs] = await Promise.all([loadManifest(), loadQueue()]);
+
+  let restored = manifest;
+  try {
+    const onDisk = await invoke<Array<{ trackId: string; byteLength: number }>>("offline_audio_list");
+    const reconciled = reconcileManifest(manifest, onDisk);
+    for (const trackId of reconciled.orphans) {
+      void invoke("offline_audio_remove", { trackId }).catch(() => {});
+    }
+    restored = reconciled.entries;
+    // A file that vanished is downloaded again for whoever wanted it.
+    storedJobs.push(...reconciled.missing.map(jobFromEntry));
+    if (reconciled.missing.length > 0) {
+      logInternalWarn("offlineStore.hydrate files missing, downloading again", {
+        count: reconciled.missing.length,
+      });
+    }
+  } catch (error) {
+    // The folder is unavailable (an unplugged drive): keep the manifest as it is rather than
+    // conclude every song is gone.
+    logInternalWarn("offlineStore.hydrate could not list downloads", { error: errorMessage(error) });
+  }
+
+  for (const job of storedJobs) {
+    const id = job.track.id;
+    const entry = restored[id];
+    if (entry) {
+      // Already on disk: whoever queued it now owns the downloaded copy instead.
+      let merged = entry;
+      if (job.owners.manual) merged = entryWithOwner(merged);
+      for (const playlistId of job.owners.playlists) merged = entryWithOwner(merged, playlistId);
+      restored = { ...restored, [id]: merged };
+    } else if (!jobs.has(id)) {
+      jobs.set(id, job);
+    }
+  }
+
+  hydrated = true;
+  setEntries(restored);
+  saveQueue();
+  for (const apply of afterHydration.splice(0)) apply();
+
+  for (const [id, entry] of Object.entries(entries)) {
+    if (entry.metadataPending) queueMetadata(id);
+  }
+  subscribeConnectivity(() => {
+    if (isOnline()) void pump();
+  });
+  logInternalInfo("offlineStore.hydrate", { count: Object.keys(entries).length, queued: jobs.size });
+  void pump();
+}
+
+function whenHydrated(apply: () => void): void {
+  if (hydrated) apply();
+  else afterHydration.push(apply);
+}
+
+/* ── Progress ────────────────────────────────────────────────────────────────────────────── */
+
+/** Real transfer progress, streamed from the backend for the song downloading now. */
+export function startOfflineProgressFeed(): void {
+  void listen<{ trackId: string; percent: number }>("offline-download-progress", (event) => {
+    if (event.payload.trackId !== downloadingId) return;
+    progress = event.payload.percent;
+    publish();
+  });
+}
+
+/* ── Queries ─────────────────────────────────────────────────────────────────────────────── */
+
+export function getOfflineStatus(trackId: string): OfflineStatus {
+  if (entries[trackId]) return "ready";
+  if (downloadingId === trackId) return "downloading";
+  const job = jobs.get(trackId);
+  if (!job) return "absent";
+  return job.failed ? "failed" : "queued";
+}
+
+export function isTrackDownloaded(trackId: string): boolean {
+  return Boolean(entries[trackId]);
+}
+
+/**
+ * The stored metadata for a downloaded song, or undefined. The manifest keeps the whole Track so
+ * playback can name a song with no network.
+ */
+export function getOfflineTrack(trackId: string): Track | undefined {
+  return entries[trackId]?.track;
+}
+
+export function getOfflineLyrics(trackId: string): Lyrics | undefined {
+  return entries[trackId]?.lyrics;
+}
+
+export interface DownloadSummary {
+  total: number;
+  downloaded: number;
+  /** Queued or downloading. */
+  pending: number;
+  failed: number;
+}
+
+/** How far along a set of songs is, for a playlist's download button and the Downloads page. */
+export function summarizeDownloads(trackIds: readonly string[], snapshot: OfflineState = state): DownloadSummary {
+  let downloaded = 0;
+  let pending = 0;
+  let failed = 0;
+  for (const id of trackIds) {
+    if (snapshot.entries[id]) downloaded += 1;
+    else if (snapshot.failed[id]) failed += 1;
+    else if (snapshot.pending[id]) pending += 1;
+  }
+  return { total: trackIds.length, downloaded, pending, failed };
+}
+
+/* ── Changes ─────────────────────────────────────────────────────────────────────────────── */
+
+type RetryFailed = "always" | "stale";
+
+function queueTracks(tracks: readonly Track[], playlistId: string | undefined, retryFailed: RetryFailed): void {
+  whenHydrated(() => {
+    const now = Date.now();
+    let nextEntries = entries;
+    let queueChanged = false;
+
+    for (const track of tracks) {
+      if (!track?.id || track.source === "local") continue;
+      const entry = nextEntries[track.id];
+      if (entry) {
+        const merged = entryWithOwner(entry, playlistId);
+        if (merged !== entry) nextEntries = { ...nextEntries, [track.id]: merged };
+        continue;
+      }
+      const job = jobs.get(track.id);
+      if (job) {
+        const owners = withOwner(job.owners, playlistId);
+        const retry = job.failed && (retryFailed === "always" || shouldRetryOnSync(job, now));
+        if (owners !== job.owners || retry) {
+          jobs.set(track.id, retry ? resetJob({ ...job, owners }) : { ...job, owners });
+          queueChanged = true;
+        }
+        continue;
+      }
+      jobs.set(track.id, newJob(track, withOwner({ manual: false, playlists: [] }, playlistId)));
+      queueChanged = true;
+    }
+
+    if (nextEntries !== entries) setEntries(nextEntries);
+    if (queueChanged) {
+      saveQueue();
+      publish();
+      void pump();
+    }
+  });
+}
+
+/** Saves a song on its own. Asking again retries one that failed. */
+export function queueDownload(track: Track, playlistId?: string): void {
+  queueTracks([track], playlistId, "always");
+}
+
+export function queueDownloads(tracks: Track[]): void {
+  queueTracks(tracks, undefined, "always");
+}
+
+/**
+ * Makes a synced playlist an owner of these songs. Failed songs are retried only once enough
+ * time has passed, so a playlist with an unplayable song does not retry it on every sync.
+ */
+export function queuePlaylistDownloads(playlistId: string, tracks: Track[]): void {
+  queueTracks(tracks, playlistId, "stale");
+}
+
+function dropJob(trackId: string): void {
+  jobs.delete(trackId);
+  if (downloadingId === trackId) void invoke("offline_audio_cancel", { trackId }).catch(() => {});
+}
+
+/** Takes a song out of the queue, stopping it if it is downloading now. */
+export function cancelDownload(trackId: string): void {
+  whenHydrated(() => {
+    if (!jobs.has(trackId)) return;
+    dropJob(trackId);
+    saveQueue();
+    publish();
+  });
+}
+
+async function deleteFiles(trackIds: readonly string[]): Promise<void> {
+  for (const trackId of trackIds) {
+    await invoke("offline_audio_remove", { trackId }).catch((error) => {
+      logInternalWarn("offlineStore.remove failed", { trackId, error: errorMessage(error) });
+    });
   }
 }
 
 /**
- * The same manifest, kept outside webview storage.
- *
- * Downloads are the one thing here that cannot be re-derived: the audio is on disk but the
- * titles and artists that make it playable live only in this manifest, and losing it used to
- * mean the next launch deleted gigabytes as untracked orphans. Local storage is not a safe
- * enough home for that on its own.
+ * Un-saves a song that was saved on its own. A song that a synced playlist also wants stays
+ * downloaded for that playlist.
  */
-async function readDurableManifest(): Promise<Record<string, OfflineEntry>> {
-  return asManifest(await getAppSetting<unknown>(MANIFEST_KEY)) ?? {};
-}
-
-function writeManifest(entries: Record<string, OfflineEntry>): void {
-  try {
-    localStorage.setItem(MANIFEST_KEY, JSON.stringify(entries));
-  } catch (error) {
-    logInternalWarn("offlineStore.writeManifest failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
+export async function removeDownload(trackId: string): Promise<void> {
+  await hydrateOfflineStore();
+  const entry = entries[trackId];
+  if (entry) {
+    if (entry.playlistIds?.length) {
+      setEntries({ ...entries, [trackId]: { ...entry, savedIndividually: false } });
+    } else {
+      const { [trackId]: _removed, ...rest } = entries;
+      setEntries(rest);
+      await deleteFiles([trackId]);
+    }
   }
-  void setAppSetting(MANIFEST_KEY, entries);
-}
-
-function readRedownloads(): Record<string, OfflineEntry> {
-  try {
-    return asManifest(JSON.parse(localStorage.getItem(REDOWNLOAD_KEY) ?? "{}")) ?? {};
-  } catch {
-    return {};
+  const job = jobs.get(trackId);
+  if (job) {
+    const owners = { ...job.owners, manual: false };
+    if (hasOwners(owners)) jobs.set(trackId, { ...job, owners });
+    else dropJob(trackId);
+    saveQueue();
+    publish();
   }
 }
 
-let redownloads: Record<string, OfflineEntry> = readRedownloads();
+/**
+ * A synced playlist no longer wants these songs (it stopped syncing, or they left it). Each is
+ * deleted unless something else still wants it.
+ */
+export async function releasePlaylistDownloads(playlistId: string, trackIds: readonly string[]): Promise<void> {
+  await hydrateOfflineStore();
+  let nextEntries = entries;
+  const toDelete: string[] = [];
+  let queueChanged = false;
 
-function writeRedownloads(next: Record<string, OfflineEntry>): void {
-  redownloads = next;
-  try {
-    localStorage.setItem(REDOWNLOAD_KEY, JSON.stringify(next));
-  } catch {
-    // The durable copy below is the one that matters.
+  for (const trackId of trackIds) {
+    const entry = nextEntries[trackId];
+    if (entry) {
+      const playlistIds = (entry.playlistIds ?? []).filter((id) => id !== playlistId);
+      if (playlistIds.length === 0 && entry.savedIndividually === false) {
+        const { [trackId]: _removed, ...rest } = nextEntries;
+        nextEntries = rest;
+        toDelete.push(trackId);
+      } else if (playlistIds.length !== (entry.playlistIds ?? []).length) {
+        nextEntries = { ...nextEntries, [trackId]: { ...entry, playlistIds } };
+      }
+      continue;
+    }
+    const job = jobs.get(trackId);
+    if (!job || !job.owners.playlists.includes(playlistId)) continue;
+    const owners = { ...job.owners, playlists: job.owners.playlists.filter((id) => id !== playlistId) };
+    if (hasOwners(owners)) jobs.set(trackId, { ...job, owners });
+    else dropJob(trackId);
+    queueChanged = true;
   }
-  void setAppSetting(REDOWNLOAD_KEY, next);
+
+  if (nextEntries !== entries) setEntries(nextEntries);
+  if (queueChanged) {
+    saveQueue();
+    publish();
+  }
+  await deleteFiles(toDelete);
 }
 
-function forgetRedownload(trackId: string): void {
-  if (!redownloads[trackId]) return;
-  const { [trackId]: _done, ...rest } = redownloads;
-  writeRedownloads(rest);
+export async function releasePlaylistDownload(playlistId: string, trackId: string): Promise<void> {
+  await releasePlaylistDownloads(playlistId, [trackId]);
 }
 
-function setState(next: Partial<OfflineState>): void {
-  state = { ...state, ...next };
-  emit();
+/** Deletes every download and empties the queue. */
+export async function removeAllDownloads(): Promise<void> {
+  await hydrateOfflineStore();
+  const active = downloadingId;
+  jobs.clear();
+  if (active) void invoke("offline_audio_cancel", { trackId: active }).catch(() => {});
+  saveQueue();
+  const ids = Object.keys(entries);
+  setEntries({});
+  await deleteFiles(ids);
 }
 
-function commitEntries(entries: Record<string, OfflineEntry>): void {
-  writeManifest(entries);
-  setState({
-    entries,
-    usedBytes: Object.values(entries).reduce((total, entry) => total + entry.byteLength, 0),
+/** Tries failed songs again: the given ones, or all of them. */
+export function retryFailedDownloads(trackIds?: readonly string[]): void {
+  whenHydrated(() => {
+    let changed = false;
+    for (const [id, job] of jobs) {
+      if (!job.failed || (trackIds && !trackIds.includes(id))) continue;
+      jobs.set(id, resetJob(job));
+      changed = true;
+    }
+    if (!changed) return;
+    saveQueue();
+    publish();
+    void pump();
   });
 }
+
+/** Clears a storage pause and tries again now, for a "Try again" button. */
+export function resumeDownloads(): void {
+  if (pause?.reason === "storage") setPause(null);
+  void pump();
+}
+
+/* ── Storage limit ───────────────────────────────────────────────────────────────────────── */
 
 export function getOfflineMaxBytes(): number {
   const raw = Number(localStorage.getItem(MAX_BYTES_KEY));
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_OFFLINE_MAX_BYTES;
 }
 
+/**
+ * Sets the storage limit. Reaching it pauses new downloads; nothing already downloaded is
+ * deleted to make room, because every download is something the user asked to keep.
+ */
 export function setOfflineMaxBytes(maxBytes: number): void {
   localStorage.setItem(MAX_BYTES_KEY, String(Math.max(0, maxBytes)));
-  void prune();
+  if (pause?.reason === "limit") setPause(null);
+  void pump();
 }
 
-/**
- * Matches the manifest against what is actually on disk.
- *
- * Disk decides availability — it is the only thing that determines whether a track will play —
- * but the manifest decides what is *known*, and the two disagreements are not symmetric. An
- * entry with no file is dropped; a file with no entry is only an orphan when there was a
- * manifest to be absent from. No manifest at all reads as a lost manifest rather than an empty
- * library, and deleting the user's downloads on that guess cannot be undone.
- */
-export function reconcileManifest(
-  manifest: Record<string, OfflineEntry>,
-  onDisk: ReadonlyArray<{ trackId: string; byteLength: number }>,
-): { entries: Record<string, OfflineEntry>; orphans: string[] } {
-  const byId = new Map(onDisk.map((entry) => [entry.trackId, entry.byteLength]));
-  const entries: Record<string, OfflineEntry> = {};
+/* ── The worker ──────────────────────────────────────────────────────────────────────────── */
 
-  for (const [trackId, entry] of Object.entries(manifest)) {
-    const byteLength = byId.get(trackId);
-    if (byteLength === undefined) continue;
-    entries[trackId] = { ...entry, byteLength };
-  }
-
-  const orphans = Object.keys(manifest).length === 0
-    ? []
-    : [...byId.keys()].filter((trackId) => !entries[trackId]);
-  return { entries, orphans };
-}
-
-/**
- * Reconciles the manifest against what is actually on disk.
- *
- * The two can drift: a manifest write can fail, the app can be killed mid-download, or the
- * data directory can be cleared out from underneath us.
- */
-export async function hydrateOfflineStore(): Promise<void> {
-  if (hydrated) return;
-  hydrated = true;
-
-  // Both copies, because either one alone can be the survivor: local storage is the hot path,
-  // the durable file is what is left when local storage is cleared out from underneath us.
-  const manifest = { ...(await readDurableManifest()), ...readManifest() };
-  try {
-    const onDisk = await invoke<Array<{ trackId: string; byteLength: number }>>(
-      "offline_audio_list",
-    );
-    const { entries, orphans } = reconcileManifest(manifest, onDisk);
-    for (const trackId of orphans) {
-      void invoke("offline_audio_remove", { trackId }).catch(() => {});
-    }
-
-    commitEntries(entries);
-    logInternalInfo("offlineStore.hydrate", { count: Object.keys(entries).length });
-
-    const durableRedownloads = asManifest(await getAppSetting<unknown>(REDOWNLOAD_KEY)) ?? {};
-    const pendingRedownloads = { ...durableRedownloads, ...redownloads };
-    for (const trackId of Object.keys(pendingRedownloads)) {
-      if (entries[trackId]) delete pendingRedownloads[trackId];
-    }
-    writeRedownloads(pendingRedownloads);
-    for (const entry of Object.values(pendingRedownloads)) requeueEntry(entry);
-  } catch (error) {
-    logInternalWarn("offlineStore.hydrate failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    commitEntries(manifest);
-  }
-}
-
-/**
- * Real transfer progress, streamed from Rust.
- *
- * Only the active download reports, because only one runs at a time — keeping a map keyed by
- * track id would be state that can never hold more than one entry.
- */
-export function startOfflineProgressFeed(): void {
-  void listen<{ trackId: string; percent: number }>("offline-download-progress", (event) => {
-    if (event.payload.trackId !== state.downloadingId) return;
-    setState({ progress: event.payload.percent });
-  });
-}
-
-export function getOfflineStatus(trackId: string): OfflineStatus {
-  if (state.entries[trackId]) return "ready";
-  if (state.downloadingId === trackId) return "downloading";
-  if (state.queued.includes(trackId)) return "queued";
-  if (state.failed[trackId]) return "failed";
-  return "absent";
-}
-
-export function isTrackDownloaded(trackId: string): boolean {
-  return Boolean(state.entries[trackId]);
-}
-
-/**
- * The stored metadata for a downloaded track, or undefined.
- *
- * The manifest keeps the whole Track, not just the id, precisely so playback can name a song
- * with no network — the audio being on disk is useless if the title and artist still require
- * a lookup that cannot happen offline.
- */
-export function getOfflineTrack(trackId: string): Track | undefined {
-  return state.entries[trackId]?.track;
-}
-
-export function getOfflineLyrics(trackId: string): Lyrics | undefined {
-  return state.entries[trackId]?.lyrics;
-}
-
-/** Resolves the stream URL for a track. Callers pass this in so the store stays data-source agnostic. */
+/** Resolves the stream URL for a track. Injected so the store stays independent of the source. */
 type StreamUrlResolver = (
   track: Track,
   quality: AudioQuality,
@@ -286,260 +778,215 @@ let resolveLyrics: ((track: Track) => Promise<Lyrics>) | null = null;
 
 export function setOfflineStreamResolver(resolver: StreamUrlResolver): void {
   resolveStreamUrl = resolver;
+  void pump();
 }
 
 export function setOfflineLyricsResolver(resolver: (track: Track) => Promise<Lyrics>): void {
   resolveLyrics = resolver;
 }
 
-async function saveArtwork(track: Track): Promise<string | undefined> {
-  if (!track.artworkUrl) return undefined;
-  const response = await tauriFetch(track.artworkUrl);
-  if (!response.ok) throw new Error(`Artwork returned HTTP ${response.status}`);
-  const mimeType = response.headers.get("content-type")?.split(";")[0] ?? "";
-  if (!["image/jpeg", "image/png", "image/webp"].includes(mimeType)) return undefined;
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.length > 12 * 1024 * 1024) return undefined;
-  await invoke("offline_artwork_save", { trackId: track.id, mimeType, dataBase64: toBase64(bytes) });
-  return `${OFFLINE_ARTWORK_PREFIX}${track.id}`;
-}
-
-export function queueDownload(track: Track, playlistId?: string): void {
-  if (track.source === "local") return;
-  const existing = state.entries[track.id];
-  if (existing) {
-    const playlistIds = playlistId
-      ? [...new Set([...(existing.playlistIds ?? []), playlistId])]
-      : existing.playlistIds ?? [];
-    const savedIndividually = playlistId ? existing.savedIndividually !== false : true;
-    if (playlistIds.length !== (existing.playlistIds ?? []).length || savedIndividually !== (existing.savedIndividually !== false)) {
-      commitEntries({ ...state.entries, [track.id]: { ...existing, playlistIds, savedIndividually } });
-    }
-    return;
+function nextDueJob(now: number): DownloadJob | null {
+  for (const job of jobs.values()) {
+    if (!job.failed && job.notBefore <= now) return job;
   }
-  const owners = pendingOwners.get(track.id) ?? { manual: false, playlists: new Set<string>() };
-  if (playlistId) owners.playlists.add(playlistId);
-  else owners.manual = true;
-  pendingOwners.set(track.id, owners);
-  if (state.queued.includes(track.id) || state.downloadingId === track.id) return;
-
-  const { [track.id]: _cleared, ...failed } = state.failed;
-  setState({
-    queued: [...state.queued, track.id],
-    pending: { ...state.pending, [track.id]: track },
-    failed,
-  });
-  pendingTracks.set(track.id, track);
-  void pump();
+  return null;
 }
 
-export function queueDownloads(tracks: Track[]): void {
-  for (const track of tracks) queueDownload(track);
-}
-
-export function queuePlaylistDownloads(playlistId: string, tracks: Track[]): void {
-  for (const track of tracks) queueDownload(track, playlistId);
-}
-
-export function cancelDownload(trackId: string): void {
-  forgetRedownload(trackId);
-  pendingTracks.delete(trackId);
-  pendingOwners.delete(trackId);
-  const { [trackId]: _dropped, ...pending } = state.pending;
-  setState({ queued: state.queued.filter((id) => id !== trackId), pending });
-}
-
-async function removeDownloadFile(trackId: string): Promise<void> {
-  cancelDownload(trackId);
-  try {
-    await invoke("offline_audio_remove", { trackId });
-  } catch (error) {
-    logInternalWarn("offlineStore.remove failed", {
-      trackId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+function scheduleWake(now: number): void {
+  if (wakeTimer !== null) window.clearTimeout(wakeTimer);
+  wakeTimer = null;
+  let soonest = Number.POSITIVE_INFINITY;
+  for (const job of jobs.values()) {
+    if (!job.failed) soonest = Math.min(soonest, job.notBefore);
   }
-  const { [trackId]: _removed, ...entries } = state.entries;
-  commitEntries(entries);
-}
-
-export async function removeDownload(trackId: string): Promise<void> {
-  const entry = state.entries[trackId];
-  if (entry?.playlistIds?.length) {
-    commitEntries({ ...state.entries, [trackId]: { ...entry, savedIndividually: false } });
-    return;
-  }
-  await removeDownloadFile(trackId);
-}
-
-export async function releasePlaylistDownload(playlistId: string, trackId: string): Promise<void> {
-  const entry = state.entries[trackId];
-  if (entry) {
-    const playlistIds = (entry.playlistIds ?? []).filter((id) => id !== playlistId);
-    if (playlistIds.length || entry.savedIndividually !== false) {
-      commitEntries({ ...state.entries, [trackId]: { ...entry, playlistIds } });
-    } else {
-      await removeDownloadFile(trackId);
-    }
-    return;
-  }
-  const owners = pendingOwners.get(trackId);
-  if (!owners) return;
-  owners.playlists.delete(playlistId);
-  if (!owners.manual && owners.playlists.size === 0) cancelDownload(trackId);
-}
-
-export async function removeAllDownloads(): Promise<void> {
-  const ids = Object.keys(state.entries);
-  setState({ queued: [], pending: {}, failed: {} });
-  pendingTracks.clear();
-  pendingOwners.clear();
-  writeRedownloads({});
-  for (const trackId of ids) {
-    await invoke("offline_audio_remove", { trackId }).catch(() => {});
-  }
-  commitEntries({});
-}
-
-/** Track objects for queued ids, so the worker has metadata without re-fetching. */
-const pendingTracks = new Map<string, Track>();
-const pendingOwners = new Map<string, { manual: boolean; playlists: Set<string> }>();
-
-/** Queues a known entry again with the same owners it had, for a "start fresh" re-download. */
-function requeueEntry(entry: OfflineEntry): void {
-  const trackId = entry.track.id;
-  pendingOwners.set(trackId, {
-    manual: entry.savedIndividually !== false,
-    playlists: new Set(entry.playlistIds ?? []),
-  });
-  pendingTracks.set(trackId, entry.track);
-  if (state.queued.includes(trackId) || state.downloadingId === trackId) return;
-  setState({
-    queued: [...state.queued, trackId],
-    pending: { ...state.pending, [trackId]: entry.track },
-  });
-  void pump();
+  if (!Number.isFinite(soonest)) return;
+  wakeTimer = window.setTimeout(() => {
+    wakeTimer = null;
+    void pump();
+  }, Math.max(250, soonest - now));
 }
 
 async function pump(): Promise<void> {
-  /*
-   * `downloadingId` is only ever set by a running pump, so finding it set while none is
-   * running means a previous one died mid-flight — a reload during a download, or a throw
-   * that escaped. Left alone it would gate every future pump and downloads would silently
-   * stop forever, which is exactly the failure this clears.
-   */
-  if (!pumping && state.downloadingId !== null) {
-    logInternalWarn("offlineStore.pump clearing stale download", {
-      trackId: state.downloadingId,
-    });
-    setState({ downloadingId: null, progress: null });
-  }
-
-  if (paused || pumping || state.downloadingId !== null) return;
-  if (state.queued.length === 0) return;
-  if (!resolveStreamUrl) {
-    logInternalWarn("offlineStore.pump has no stream resolver");
-    return;
-  }
-
+  if (!hydrated || pumping || moving || !resolveStreamUrl) return;
   pumping = true;
   try {
-    while (state.queued.length > 0 && !paused) {
-      const [trackId, ...rest] = state.queued;
-      const track = pendingTracks.get(trackId);
-      setState({ queued: rest, downloadingId: trackId, progress: null });
-
-      if (!track) {
-        setState({ downloadingId: null, progress: null });
-        continue;
+    for (;;) {
+      if (moving || pause?.reason === "storage") break;
+      if (usedBytes >= getOfflineMaxBytes()) {
+        if (jobs.size > 0) setPause("limit");
+        break;
       }
-
-      try {
-        logInternalInfo("offlineStore.download start", { trackId, title: track.title });
-        const { url, mimeType, cookie } = await resolveStreamUrl(track, getDownloadQuality());
-        const byteLength = await invoke<number>("offline_audio_save", { url, trackId, cookie });
-        logInternalInfo("offlineStore.download complete", { trackId, byteLength });
-        // A re-download after a "start fresh" folder change kept its cover on disk.
-        const [artwork, lyrics] = await Promise.allSettled([
-          track.artworkUrl?.startsWith(OFFLINE_ARTWORK_PREFIX)
-            ? Promise.resolve(track.artworkUrl)
-            : saveArtwork(track),
-          resolveLyrics?.(track) ?? Promise.resolve(undefined),
-        ]);
-        pendingTracks.delete(trackId);
-        const owners = pendingOwners.get(trackId);
-        pendingOwners.delete(trackId);
-        {
-          const { [trackId]: _done, ...pending } = state.pending;
-          setState({ pending });
-        }
-        if (owners && (owners.manual || owners.playlists.size)) {
-          commitEntries({
-            ...state.entries,
-            [trackId]: {
-              track: {
-                ...track, mimeType,
-                artworkUrl: artwork.status === "fulfilled" && artwork.value ? artwork.value : track.artworkUrl,
-              },
-              byteLength, downloadedAt: Date.now(),
-              savedIndividually: owners.manual,
-              playlistIds: [...owners.playlists],
-              lyrics: lyrics.status === "fulfilled" && lyrics.value
-                ? lyrics.value
-                : redownloads[trackId]?.lyrics,
-            },
-          });
-        } else {
-          await invoke("offline_audio_remove", { trackId });
-        }
-        forgetRedownload(trackId);
-        setState({ downloadingId: null, progress: null });
-        await prune();
-      } catch (error) {
-        pendingTracks.delete(trackId);
-        pendingOwners.delete(trackId);
-        const { [trackId]: _failed, ...pending } = state.pending;
-        const message = error instanceof Error ? error.message : String(error);
-        logInternalError("offlineStore.download failed", error, { trackId });
-        setState({
-          downloadingId: null,
-          progress: null,
-          pending,
-          failed: { ...state.failed, [trackId]: message },
-        });
+      if (!isOnline()) {
+        if (nextDueJob(Number.POSITIVE_INFINITY)) setPause("offline");
+        break;
       }
+      if (pause) setPause(null);
+
+      const now = Date.now();
+      const job = nextDueJob(now);
+      if (!job) {
+        scheduleWake(now);
+        break;
+      }
+      await runJob(job);
     }
   } finally {
     pumping = false;
     const waiters = idleWaiters;
     idleWaiters = [];
     for (const resolve of waiters) resolve();
-    // DOWNLOAD_CONCURRENCY is 1 today; kept explicit so raising it is a one-line change.
-    if (DOWNLOAD_CONCURRENCY > 1 && state.queued.length > 0) void pump();
   }
 }
 
-/** Trims the store back under its ceiling, oldest download first. */
-async function prune(): Promise<void> {
-  const maxBytes = getOfflineMaxBytes();
-  if (state.usedBytes <= maxBytes) return;
+async function runJob(job: DownloadJob): Promise<void> {
+  const trackId = job.track.id;
+  downloadingId = trackId;
+  progress = null;
+  publish();
+  logInternalInfo("offlineStore.download start", {
+    trackId,
+    title: job.track.title,
+    attempt: job.attempts + 1,
+  });
 
   try {
-    await invoke("offline_audio_prune", { maxBytes });
-    const onDisk = await invoke<Array<{ trackId: string; byteLength: number }>>(
-      "offline_audio_list",
-    );
-    const kept = new Set(onDisk.map((entry) => entry.trackId));
-    const entries = Object.fromEntries(
-      Object.entries(state.entries).filter(([trackId]) => kept.has(trackId)),
-    );
-    commitEntries(entries);
-  } catch (error) {
-    logInternalWarn("offlineStore.prune failed", {
-      error: error instanceof Error ? error.message : String(error),
+    const stream = await resolveStreamUrl!(job.track, getDownloadQuality());
+    const result = await invoke<{ byteLength: number; mimeType: string }>("offline_audio_save", {
+      url: stream.url,
+      trackId,
+      cookie: stream.cookie,
     });
+    onDownloaded(trackId, result.byteLength, result.mimeType || stream.mimeType);
+  } catch (error) {
+    onFailed(trackId, error);
+  } finally {
+    downloadingId = null;
+    progress = null;
+    publish();
   }
 }
+
+function onDownloaded(trackId: string, byteLength: number, mimeType: string): void {
+  const job = jobs.get(trackId);
+  jobs.delete(trackId);
+  saveQueue();
+
+  // Cancelled, or every owner let go, while the last bytes were arriving.
+  if (!job || !hasOwners(job.owners)) {
+    void deleteFiles([trackId]);
+    logInternalInfo("offlineStore.download discarded", { trackId });
+    return;
+  }
+
+  const artworkUrl = job.track.artworkUrl;
+  const entry: OfflineEntry = {
+    track: { ...job.track, mimeType },
+    byteLength,
+    downloadedAt: Date.now(),
+    savedIndividually: job.owners.manual,
+    playlistIds: job.owners.playlists,
+    lyrics: job.keep?.lyrics,
+    remoteArtworkUrl: job.keep?.remoteArtworkUrl
+      ?? (artworkUrl && !artworkUrl.startsWith(OFFLINE_ARTWORK_PREFIX) ? artworkUrl : undefined),
+    metadataPending: true,
+  };
+  setEntries({ ...entries, [trackId]: entry });
+  queueMetadata(trackId);
+  logInternalInfo("offlineStore.download complete", { trackId, byteLength });
+}
+
+function onFailed(trackId: string, error: unknown): void {
+  const job = jobs.get(trackId);
+  const kind = errorKind(error);
+  const message = errorMessage(error);
+  // Removed while running (cancelled on purpose), or stopped for a folder move: nothing to do.
+  if (!job || kind === "cancelled") return;
+
+  logInternalWarn("offlineStore.download failed", { trackId, kind, error: message, attempt: job.attempts + 1 });
+  if (kind === "network") reportNetworkFailure();
+
+  const plan = planRetry(job, kind, message, Date.now());
+  if (plan.moveToBack) jobs.delete(trackId);
+  jobs.set(trackId, plan.job);
+  saveQueue();
+  if (plan.pause) setPause(plan.pause, message);
+  else publish();
+}
+
+/* ── Artwork and lyrics, fetched after the audio so they never hold up the queue ─────────── */
+
+const metadataQueue = new Set<string>();
+let metadataRunning = false;
+
+function queueMetadata(trackId: string): void {
+  metadataQueue.add(trackId);
+  void runMetadata();
+}
+
+async function runMetadata(): Promise<void> {
+  if (metadataRunning) return;
+  metadataRunning = true;
+  try {
+    while (metadataQueue.size > 0) {
+      await whenOnline();
+      const [trackId] = metadataQueue;
+      metadataQueue.delete(trackId);
+      const entry = entries[trackId];
+      if (!entry?.metadataPending) continue;
+
+      const [artwork, lyrics] = await Promise.allSettled([saveArtwork(entry), fetchLyrics(entry)]);
+      const current = entries[trackId];
+      if (!current) continue;
+      const artworkSaved = artwork.status === "fulfilled" && artwork.value;
+      setEntries({
+        ...entries,
+        [trackId]: {
+          ...current,
+          track: artworkSaved
+            ? { ...current.track, artworkUrl: `${OFFLINE_ARTWORK_PREFIX}${trackId}` }
+            : current.track,
+          lyrics: lyrics.status === "fulfilled" && lyrics.value ? lyrics.value : current.lyrics,
+          metadataPending: false,
+        },
+      });
+    }
+  } finally {
+    metadataRunning = false;
+  }
+}
+
+/** Saves the cover beside the audio. Resolves true once there is a local copy. */
+async function saveArtwork(entry: OfflineEntry): Promise<boolean> {
+  const current = entry.track.artworkUrl;
+  if (current?.startsWith(OFFLINE_ARTWORK_PREFIX)) return true;
+  const remote = entry.remoteArtworkUrl ?? current;
+  if (!remote) return false;
+  const response = await tauriFetch(remote);
+  if (!response.ok) throw new Error(`Artwork returned HTTP ${response.status}`);
+  const mimeType = response.headers.get("content-type")?.split(";")[0] ?? "";
+  if (!["image/jpeg", "image/png", "image/webp"].includes(mimeType)) return false;
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.length > MAX_ARTWORK_BYTES) return false;
+  await invoke("offline_artwork_save", { trackId: entry.track.id, mimeType, dataBase64: toBase64(bytes) });
+  return true;
+}
+
+async function fetchLyrics(entry: OfflineEntry): Promise<Lyrics | undefined> {
+  if (entry.lyrics || !resolveLyrics) return entry.lyrics;
+  let timer: number | undefined;
+  try {
+    return await Promise.race([
+      resolveLyrics(entry.track),
+      new Promise<undefined>((resolve) => {
+        timer = window.setTimeout(() => resolve(undefined), LYRICS_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+/* ── Download folder ─────────────────────────────────────────────────────────────────────── */
 
 export type OfflineMigrationMode = "move" | "copy" | "fresh";
 
@@ -555,42 +1002,54 @@ export function getOfflineLocation(): Promise<OfflineLocation> {
   return invoke<OfflineLocation>("offline_location_get");
 }
 
+function waitForIdle(): Promise<void> {
+  if (!pumping) return Promise.resolve();
+  return new Promise((resolve) => idleWaiters.push(resolve));
+}
+
 /**
  * Moves the download store to `folder` (a "YTM Offline" subfolder is made inside it), or back
  * to the default location when `folder` is null.
  *
- * Downloads pause first and the current one is allowed to finish, so no file is written into
- * a folder that is being emptied. "fresh" deletes the old audio and queues every song again.
+ * The download running now is stopped and stays queued, so nothing is written into a folder
+ * that is being emptied. "fresh" deletes the old audio and queues every song again, keeping its
+ * cover and lyrics.
  */
 export async function changeOfflineLocation(
   folder: string | null,
   mode: OfflineMigrationMode,
   onProgress?: (done: number, total: number) => void,
 ): Promise<OfflineLocation> {
-  paused = true;
+  await hydrateOfflineStore();
+  moving = true;
+  setPause("moving");
+  if (downloadingId) void invoke("offline_audio_cancel", { trackId: downloadingId }).catch(() => {});
   const unlisten = await listen<{ done: number; total: number }>(
     "offline-location-progress",
     (event) => onProgress?.(event.payload.done, event.payload.total),
   );
   try {
-    if (pumping) await new Promise<void>((resolve) => idleWaiters.push(resolve));
+    await waitForIdle();
     const location = await invoke<OfflineLocation>("offline_location_set", { folder, mode });
     logInternalInfo("offlineStore.location changed", { mode, isDefault: location.isDefault });
 
     if (mode === "fresh") {
-      const previous = state.entries;
-      writeRedownloads({ ...redownloads, ...previous });
-      commitEntries({});
-      paused = false;
-      for (const entry of Object.values(previous)) requeueEntry(entry);
+      for (const entry of Object.values(entries)) {
+        if (!jobs.has(entry.track.id)) jobs.set(entry.track.id, jobFromEntry(entry));
+      }
+      saveQueue();
+      setEntries({});
     }
     return location;
   } finally {
     unlisten();
-    paused = false;
+    moving = false;
+    setPause(null);
     void pump();
   }
 }
+
+/* ── Subscription ────────────────────────────────────────────────────────────────────────── */
 
 function subscribe(listener: Listener): () => void {
   listeners.add(listener);

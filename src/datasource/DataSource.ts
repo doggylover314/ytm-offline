@@ -76,7 +76,11 @@ export abstract class DataSource {
    */
   beginPlayReport?(track: Track): Promise<void>;
   updatePlayReport?(track: Track, positionSec: number, final: boolean): Promise<void>;
-  restoreSession?(): Promise<boolean>;
+  /**
+   * Restores the stored session. "offline" means a credential is stored but YouTube could not
+   * be reached, so the app should stay signed in and work from what it has on disk.
+   */
+  restoreSession?(): Promise<boolean | "offline">;
   /**
    * Renews an expired session without involving the user. False means it genuinely lapsed and
    * only a sign-in will do. Must not discard caches — the point is to avoid a full resync.

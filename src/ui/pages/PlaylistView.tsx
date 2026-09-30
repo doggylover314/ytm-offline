@@ -13,8 +13,8 @@ import { Tooltip } from "@/components/motion/tooltip";
 import { logInternalError } from "../../internal/logging";
 import { SelectionBar } from "../components/SelectionBar";
 import { useTrackSelection } from "../hooks/useTrackSelection";
-import { queueDownloads, useOfflineState } from "../../player/offlineStore";
-import { disablePlaylistSync, enablePlaylistSync, useSyncedPlaylists } from "../../player/playlistSync";
+import { getOfflineTrack, queueDownloads, useOfflineState } from "../../player/offlineStore";
+import { disablePlaylistSync, enablePlaylistSync, getSyncedPlaylists, useSyncedPlaylists } from "../../player/playlistSync";
 import { usePlaylistContextMenu } from "../components/PlaylistContextMenu";
 import { formatCollectionMeta, HEADER_SECONDARY_BUTTON, MediaHeader } from "../components/MediaHeader";
 import { isLikedSongsId, likedSongsCover } from "../likedSongsArtwork";
@@ -345,7 +345,13 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
         showPage(page);
       })
       .catch(() => {
-        if (active && !showedPage) setError("Unable to load this playlist.");
+        if (!active || showedPage) return;
+        // Offline, a synced playlist is still whatever of it is downloaded, in playlist order.
+        const downloaded = (getSyncedPlaylists()[playlist.id]?.trackIds ?? [])
+          .map((trackId) => getOfflineTrack(trackId))
+          .filter((track): track is Track => Boolean(track));
+        if (downloaded.length > 0) showPage({ tracks: downloaded, hasMore: false });
+        else setError("Unable to load this playlist.");
       })
       .finally(() => {
         if (active) setIsLoading(false);

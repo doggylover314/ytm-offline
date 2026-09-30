@@ -330,7 +330,7 @@ export function SearchOverlay({
     <div className="fixed inset-0 z-[70] flex justify-center pt-[12vh]" onMouseDown={onDismiss ?? onClose}>
       <section
         className="flex max-h-[70vh] w-[min(600px,92vw)] flex-col self-start overflow-hidden rounded-lg bg-card p-1.5 shadow-[inset_0_0_0_1px_var(--color-border)]"
-        data-onboarding="search-panel"
+       
         role="dialog"
         aria-modal="true"
         aria-label="Search artists, songs, playlists, and albums"

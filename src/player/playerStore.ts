@@ -12,6 +12,7 @@ import {
   setOfflineLyricsResolver,
   startOfflineProgressFeed,
 } from "./offlineStore";
+import { hydrateSyncedPlaylists } from "./playlistSync";
 
 const dataSource = new YouTubeMusicDataSource();
 
@@ -38,6 +39,7 @@ setOfflineStreamResolver((track, quality) => {
 });
 setOfflineLyricsResolver((track) => dataSource.getLyrics(track));
 void hydrateOfflineStore();
+void hydrateSyncedPlaylists();
 startOfflineProgressFeed();
 
 export const tabManager = new TabManager(dataSource);

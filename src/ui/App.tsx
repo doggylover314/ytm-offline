@@ -65,6 +65,8 @@ import { clearAppSession, loadAppSession, saveAppSession } from "../player/appSe
 import { useMediaSession } from "../player/useMediaSession";
 import { LastFmService } from "../player/LastFm";
 import { syncAllPlaylists } from "../player/playlistSync";
+import { isOnline, subscribeConnectivity } from "../internal/connectivity";
+import { isNetworkError } from "../internal/errors";
 import { playerUIStore, usePlayerUIState } from "./stores/playerUIStore";
 import { AppLoadingScreen } from "./components/AppLoadingScreen";
 import { AuthOverlay } from "./components/AuthOverlay";
@@ -79,19 +81,10 @@ import {
 import {
   clearAppSettings,
   getAppSetting,
-  removeAppSetting,
   setAppSetting,
 } from "../internal/appSettings";
 import { clearCache } from "../internal/cache";
-import {
-  Onboarding,
-  OnboardingCompleteToast,
-  KeychainNotice,
-  OnboardingWelcome,
-  nextOnboardingStep,
-  previousOnboardingStep,
-  type OnboardingStep,
-} from "./components/Onboarding";
+import { KeychainNotice, OnboardingWelcome } from "./components/Welcome";
 import { isLinux, isMacOS } from "./platform";
 import { useReduceMotion } from "./settings/renderEffects";
 
@@ -371,14 +364,6 @@ export default function App() {
   const [queuePanelWidth, setQueuePanelWidth] = useState(360);
   const isQueuePanelCollapsed = useQueuePanelCollapsed();
   const [loadingScreenState, setLoadingScreenState] = useState<"visible" | "leaving" | "hidden">("visible");
-  const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(() =>
-    readLocalOnboardingComplete() ? true : null
-  );
-  const [onboardingStep, setOnboardingStep] = useState<OnboardingStep | null>(null);
-  const [onboardingFirstTabId, setOnboardingFirstTabId] = useState(activeTabId);
-  const [onboardingSecondTabId, setOnboardingSecondTabId] = useState<string | null>(null);
-  const [, setOnboardingSearchQuery] = useState("");
-  const [showOnboardingComplete, setShowOnboardingComplete] = useState(false);
   const [showKeychainNotice, setShowKeychainNotice] = useState(
     () => isMacOS && localStorage.getItem(KEYCHAIN_NOTICE_COMPLETE_KEY) !== "true"
   );
@@ -463,12 +448,10 @@ export default function App() {
     }, LOADING_SCREEN_FADE_MS);
   }, []);
 
-  const markOnboardingComplete = useCallback((showCompleteToast: boolean) => {
+  /** The welcome screen is shown once: until someone signs in or chooses to go without. */
+  const markOnboardingComplete = useCallback(() => {
     saveLocalOnboardingComplete();
-    setOnboardingComplete(true);
-    setOnboardingStep(null);
     setShowOnboardingWelcome(false);
-    if (showCompleteToast) setShowOnboardingComplete(true);
     void setAppSetting(ONBOARDING_COMPLETE_SETTING_KEY, true);
   }, []);
 
@@ -479,7 +462,7 @@ export default function App() {
 
     const loadOnboardingCompletion = async () => {
       if (readLocalOnboardingComplete()) {
-        markOnboardingComplete(false);
+        markOnboardingComplete();
         return;
       }
 
@@ -487,19 +470,17 @@ export default function App() {
       if (!active) return;
 
       if (storedComplete === true) {
-        markOnboardingComplete(false);
+        markOnboardingComplete();
         return;
       }
 
       if (await hasStoredYoutubeSession()) {
         if (!active) return;
-        markOnboardingComplete(false);
+        markOnboardingComplete();
         return;
       }
 
       if (!active) return;
-      setOnboardingComplete(false);
-      setOnboardingStep("open-search");
       setShowOnboardingWelcome(true);
     };
 
@@ -681,19 +662,33 @@ export default function App() {
     });
   };
 
+  /*
+   * Synced playlists are brought up to date at launch, every five minutes, when the window
+   * comes back into focus (at most once a minute), and as soon as the connection returns.
+   */
   useEffect(() => {
-    if (libraryState.status !== "ready") return;
-    const sync = () => { if (navigator.onLine) void syncAllPlaylists(libraryController); };
+    if (libraryState.status !== "ready" || libraryState.offline) return;
+    let lastFocusSync = 0;
+    const sync = () => {
+      if (isOnline()) void syncAllPlaylists(libraryController);
+    };
+    const syncOnFocus = () => {
+      if (Date.now() - lastFocusSync < 60_000) return;
+      lastFocusSync = Date.now();
+      sync();
+    };
     sync();
     const timer = window.setInterval(sync, 5 * 60 * 1000);
-    window.addEventListener("focus", sync);
-    window.addEventListener("online", sync);
+    window.addEventListener("focus", syncOnFocus);
+    const unsubscribe = subscribeConnectivity(() => {
+      if (isOnline()) sync();
+    });
     return () => {
       window.clearInterval(timer);
-      window.removeEventListener("focus", sync);
-      window.removeEventListener("online", sync);
+      window.removeEventListener("focus", syncOnFocus);
+      unsubscribe();
     };
-  }, [libraryState.status]);
+  }, [libraryState.status, libraryState.offline]);
 
   useEffect(() => {
     if (showKeychainNotice) return;
@@ -710,6 +705,8 @@ export default function App() {
 
   useEffect(() => {
     if (playerState.status !== "error" || !playerState.error) return;
+    // Offline, a song that is not downloaded cannot play; the offline banner already says why.
+    if (!isOnline() || isNetworkError(playerState.error)) return;
     const message = `Playback failed:\n\n${playerState.error}`;
     if (lastErrorAlertRef.current === message) return;
     lastErrorAlertRef.current = message;
@@ -846,9 +843,6 @@ export default function App() {
     playerUIStore.setLyricsOpen(false);
     setIsSearchOpen(false);
     setAvailableUpdate(null);
-    setOnboardingComplete(null);
-    setOnboardingStep(null);
-    setShowOnboardingComplete(false);
     setShowOnboardingWelcome(false);
 
     tabManager.reset("1");
@@ -997,16 +991,6 @@ export default function App() {
     });
   };
 
-  /*
-   * Memoized because `PlayerBar` hangs its whole connectivity chain off this identity:
-   * `updateConnectionState` → `checkConnection` → the effect that calls it on mount. A fresh
-   * function each render re-ran that effect on every render, firing a live connectivity probe
-   * each time — several per track change.
-   */
-  const handleConnectionRestored = useCallback(async () => {
-    await libraryController.recoverConnection();
-  }, []);
-
   const handleNavigatePlaylist = (playlist: Playlist) => {
     playerUIStore.setLyricsOpen(false);
     navigateTab(activeTabId, {
@@ -1036,12 +1020,6 @@ export default function App() {
     ]);
     setActiveTabId(newId);
     setNextTabId((currentId) => currentId + 1);
-    if (onboardingStep === "new-tab") {
-      setOnboardingSecondTabId(newId);
-      setOnboardingSearchQuery("");
-      setOnboardingStep("type-second");
-      setIsSearchOpen(true);
-    }
   };
 
   const handleSignIn = async () => {
@@ -1166,8 +1144,6 @@ export default function App() {
     }
 
     const searchTabId = targetTabId;
-    if (onboardingStep === "type-first") setOnboardingStep("play-first");
-    if (onboardingStep === "type-second") setOnboardingStep("play-second");
     const applySearchResults = (results: SearchResults) => {
       updateSearchTab(searchTabId, query, {
         view: "search",
@@ -1320,115 +1296,19 @@ export default function App() {
       void tabManager.setActive(tabId);
     }
     setActiveTabId(tabId);
-    if (onboardingStep === "switch-back" && tabId === onboardingFirstTabId) {
-      markOnboardingComplete(true);
-    }
-  };
-
-  const finishOnboarding = () => {
-    markOnboardingComplete(false);
-  };
-
-  /*
-   * Skipping advances the tour without performing the step.
-   *
-   * Deliberately not "do it for them": creating the tab or playing the track on their behalf
-   * would make Skip an action button, and someone skipping a step is saying they do not want
-   * that thing to happen. Later steps may then have nothing to point at, which is fine — they
-   * are skippable too, and the last one finishes the tour.
-   */
-  const skipOnboardingStep = () => {
-    if (!onboardingStep) return;
-    const next = nextOnboardingStep(onboardingStep);
-    if (next) setOnboardingStep(next);
-    else markOnboardingComplete(true);
-  };
-
-  const backOnboardingStep = () => {
-    if (!onboardingStep) return;
-    const previous = previousOnboardingStep(onboardingStep);
-    if (previous) setOnboardingStep(previous);
   };
 
   const handlePlaySearchTrack = async (track: Track) => {
-    const stepAtStart = onboardingStep;
-    const tabAtStart = activeTabId;
-    const started = await playerController.playTrackById(track.id, [track], true);
-    if (!started) return;
-
-    if (
-      (stepAtStart === "type-first" || stepAtStart === "play-first")
-      && tabAtStart === onboardingFirstTabId
-    ) {
-      setOnboardingStep("new-tab");
-      setIsSearchOpen(false);
-    }
-    if (
-      (stepAtStart === "type-second" || stepAtStart === "play-second")
-      && tabAtStart === onboardingSecondTabId
-    ) {
-      setOnboardingStep("switch-back");
-      setIsSearchOpen(false);
-    }
+    await playerController.playTrackById(track.id, [track], true);
   };
 
   const handlePlaySearchResult = async (track: Track) => {
-    const stepAtStart = onboardingStep;
-    const tabAtStart = activeTabId;
-    const started = await playerController.playTrackById(track.id, [track], true);
-    if (!started) return;
-
-    if (stepAtStart === "play-first" && tabAtStart === onboardingFirstTabId) {
-      setOnboardingStep("new-tab");
-    }
-    if (stepAtStart === "play-second" && tabAtStart === onboardingSecondTabId) {
-      setOnboardingStep("switch-back");
-    }
+    await playerController.playTrackById(track.id, [track], true);
   };
 
   const dismissSearch = () => {
     setIsSearchOpen(false);
-    if (
-      onboardingStep === "type-first"
-      || onboardingStep === "play-first"
-      || onboardingStep === "type-second"
-      || onboardingStep === "play-second"
-    ) {
-      setOnboardingSearchQuery("");
-      setOnboardingStep("open-search");
-    }
   };
-
-  const restartOnboarding = () => {
-    const firstMusicTab = tabs.find((tab) => tab.view !== "settings");
-    if (!firstMusicTab) return;
-    clearLocalOnboardingComplete();
-    setOnboardingComplete(false);
-    setOnboardingFirstTabId(firstMusicTab.id);
-    setOnboardingSecondTabId(null);
-    setOnboardingSearchQuery("");
-    setOnboardingStep("open-search");
-    setShowOnboardingWelcome(false);
-    void removeAppSetting(ONBOARDING_COMPLETE_SETTING_KEY);
-    handleSwitchTab(firstMusicTab.id);
-  };
-
-  useEffect(() => {
-    if (onboardingStep === "open-search" && isSearchOpen) {
-      setOnboardingSearchQuery("");
-      setOnboardingStep(
-        onboardingSecondTabId && activeTabId === onboardingSecondTabId
-          ? "type-second"
-          : "type-first"
-      );
-    }
-  }, [activeTabId, isSearchOpen, onboardingSecondTabId, onboardingStep]);
-
-  useEffect(() => {
-    if (!showOnboardingComplete) return;
-    const timer = window.setTimeout(() => setShowOnboardingComplete(false), 3400);
-    return () => window.clearTimeout(timer);
-  }, [showOnboardingComplete]);
 
   useEffect(() => {
     if (
@@ -1690,7 +1570,6 @@ export default function App() {
     isSearchOpen,
     keyboardShortcuts,
     nextTabId,
-    onboardingStep,
     playerState.currentTrack,
     playerState.status,
     tabs,
@@ -2116,7 +1995,6 @@ useEffect(() => {
               <SettingsPage
                 libraryController={libraryController}
                 libraryState={libraryState}
-                onRestartOnboarding={restartOnboarding}
                 onSignIn={handleSignIn}
                 onDeleteAllAppData={handleDeleteAllAppData}
               />
@@ -2168,7 +2046,6 @@ useEffect(() => {
               onToggleLyrics={handleToggleLyrics}
               onToggleQueue={handleToggleQueue}
               isQueueOpen={isQueuePanelOpen}
-              onConnectionRestored={handleConnectionRestored}
               handlePlayerBarClick={handlePlayerBarClick}
             />
           </ErrorBoundary>
@@ -2187,7 +2064,6 @@ useEffect(() => {
         onOpenAlbum={handleNavigateAlbum}
         onOpenArtist={(artist) => handleNavigateArtist(artist)}
         onOpenPlaylist={handleNavigatePlaylist}
-        onQueryChange={setOnboardingSearchQuery}
       />
       {loadingScreenState !== "hidden" && (
         <AppLoadingScreen isLeaving={loadingScreenState === "leaving"} />
@@ -2201,21 +2077,12 @@ useEffect(() => {
               isSigningIn={libraryState.authProgress != null}
               onSignIn={() => {
                 void handleSignIn().then(() => {
-                  if (libraryController.getState().status === "ready") setShowOnboardingWelcome(false);
+                  if (libraryController.getState().status === "ready") markOnboardingComplete();
                 });
               }}
-              onContinue={() => setShowOnboardingWelcome(false)}
+              onContinue={markOnboardingComplete}
             />
           )}
-          {loadingScreenState === "hidden" && onboardingComplete === false && !showOnboardingWelcome && onboardingStep && (
-            <Onboarding
-              step={onboardingStep}
-              onSkip={finishOnboarding}
-              onSkipStep={skipOnboardingStep}
-              onBack={backOnboardingStep}
-            />
-          )}
-          {showOnboardingComplete && <OnboardingCompleteToast />}
         </>
       )}
       {availableUpdate && (

@@ -72,7 +72,7 @@ pub(crate) fn sniff_container_mime(
 }
 
 /// The magic-number half of `sniff_container_mime`, split out so it can be tested on bytes.
-fn container_mime_of(header: &[u8]) -> Option<&'static str> {
+pub(crate) fn container_mime_of(header: &[u8]) -> Option<&'static str> {
     if header.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
         // Matroska. YouTube's WebM audio is always Opus, and a WebM carrying Vorbis instead is
         // rare enough that failing loudly on it beats guessing the other way on every download.
