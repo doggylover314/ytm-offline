@@ -83,6 +83,7 @@ type PlayerControllerMethod =
   | "getSleepTimerRemainingMs"
   | "getLyrics"
   | "getPlayerSession"
+  | "forgetLoadedTrack"
   | "removeFromQueueAt"
   | "playQueueTrackAt"
   | "moveQueueTrack"
@@ -160,6 +161,7 @@ class ActivePlayerController implements PlayerControllerActions {
   getLyrics = (track: Parameters<PlayerController["getLyrics"]>[0]) =>
     tabManager.getActivePlayer().getLyrics(track);
   getPlayerSession = () => tabManager.getActivePlayer().exportSession();
+  forgetLoadedTrack = (resumeAt?: number | null) => tabManager.getActivePlayer().forgetLoadedTrack(resumeAt);
   removeFromQueueAt = (index: number) => tabManager.getActivePlayer().removeFromQueueAt(index);
   playQueueTrackAt = (index: number) => tabManager.getActivePlayer().playQueueTrackAt(index);
   moveQueueTrack = (

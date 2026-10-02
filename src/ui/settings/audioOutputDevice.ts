@@ -37,32 +37,34 @@ function read(): string | null {
   return readLocalJsonSetting<string | null>(STORAGE_KEY, isDeviceId);
 }
 
-/**
- * Pushes the choice down to Rust and, if the engine had a track loaded, reloads it — reopening
- * the stream drops both decks, the same loss `PlayerController.recoverFromPrematureEnd`
- * recovers from when a connection dies mid-track, reused here since a device switch empties the
- * decks the same way.
- *
- * ponytail: a paused track blips playing for an instant before pausing back down, rather than
- * teaching this a load-that-does-not-play path just for the one case where nothing was audible
- * anyway.
- */
-async function push(id: string | null): Promise<void> {
-  const session = usesRustAudioEngine() ? playerController.getPlayerSession() : null;
+async function forward(id: string | null): Promise<boolean> {
   try {
     await pushOutputDevice(id);
+    return true;
   } catch (error) {
     logInternalWarn("Output device push failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    return;
+    return false;
   }
+}
+
+/**
+ * Switches the Rust engine to another device. Reopening the stream drops both decks, so a
+ * playing track is loaded again where it was; a paused one is only marked unloaded, and loads
+ * where it was left when play is pressed, rather than briefly playing out loud to reload.
+ */
+async function push(id: string | null): Promise<void> {
+  const session = usesRustAudioEngine() ? playerController.getPlayerSession() : null;
+  if (!await forward(id)) return;
 
   if (!session?.currentTrack || session.status === "idle") return;
-  const wasPlaying = session.status === "playing";
+  if (session.status !== "playing") {
+    playerController.forgetLoadedTrack(session.positionSec);
+    return;
+  }
   await playerController.playTrackById(session.currentTrack.id);
   if (session.positionSec > 0) await playerController.seekTo(session.positionSec);
-  if (!wasPlaying) await playerController.pause();
 }
 
 function subscribe(callback: () => void) {
@@ -86,10 +88,12 @@ export function setOutputDevice(id: string | null): void {
 
 export async function hydrateOutputDevice(): Promise<void> {
   await hydrateLocalJsonSetting(STORAGE_KEY, isDeviceId);
-  // A fresh Rust process always opens the OS default until told otherwise, so the stored choice
-  // has to be pushed down once at startup — nothing is loaded this early, so `push` just forwards
-  // it.
-  void push(read());
+  /*
+   * A fresh Rust process opens the OS default until told otherwise, so the stored choice is
+   * forwarded once at startup. Only forwarded: the restored session counts as a loaded track,
+   * and reloading it played every launch's last song for a moment (and logged a play).
+   */
+  void forward(read());
   window.dispatchEvent(new Event(CHANGE_EVENT));
 }
 

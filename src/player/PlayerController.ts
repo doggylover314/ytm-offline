@@ -961,6 +961,16 @@ export class PlayerController {
     if (this.warmedStream?.trackId === trackId) this.warmedStream = null;
   }
 
+  /**
+   * The engine no longer holds the current track: the Rust engine drops a track when it ends,
+   * and a new output device drops both decks. The next play or seek loads it again, from
+   * `resumeAt` when given, instead of failing with "No audio track is loaded".
+   */
+  forgetLoadedTrack(resumeAt: number | null = null): void {
+    this.loadedTrackId = null;
+    this.pendingSeekTime = resumeAt;
+  }
+
   private async handleTrackEnded(): Promise<void> {
     if (this.handlingTrackEnd || !this.isTabActive) return;
     this.handlingTrackEnd = true;
@@ -983,6 +993,7 @@ export class PlayerController {
           trackId: this.stopAfterTrack.id,
         });
         this.stopAfterTrack = null;
+        this.forgetLoadedTrack();
         this.setState({ status: "paused" });
         return;
       }
@@ -1034,12 +1045,14 @@ export class PlayerController {
       }
 
       if (!this.autoplayEnabled || !seed || !this.dataSource.getRecommendations) {
+        this.forgetLoadedTrack();
         this.setState({ status: "paused" });
         return;
       }
 
       const recommendations = await this.getVariedRecommendations(seed);
       if (recommendations.length === 0) {
+        this.forgetLoadedTrack();
         this.setState({ status: "paused" });
         return;
       }

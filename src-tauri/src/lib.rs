@@ -1725,14 +1725,36 @@ fn youtube_cookie_keyring_entry() -> Result<keyring::Entry, CommandError> {
     })
 }
 
-fn youtube_cookie_chunk_entry(index: usize) -> Result<keyring::Entry, CommandError> {
-    keyring::Entry::new(
-        KEYRING_SERVICE,
-        &format!("{YOUTUBE_COOKIE_KEYRING_USER}-{index}"),
-    )
-    .map_err(|error| CommandError {
+/// One chunk of the stored session. `set` is `a` or `b`; `None` is the unlettered set written
+/// before saves alternated, still read until the next save replaces it.
+fn youtube_cookie_chunk_entry(set: Option<&str>, index: usize) -> Result<keyring::Entry, CommandError> {
+    let user = match set {
+        Some(set) => format!("{YOUTUBE_COOKIE_KEYRING_USER}-{set}-{index}"),
+        None => format!("{YOUTUBE_COOKIE_KEYRING_USER}-{index}"),
+    };
+    keyring::Entry::new(KEYRING_SERVICE, &user).map_err(|error| CommandError {
         message: format!("credential store unavailable: {error}"),
     })
+}
+
+/// The manifest entry: how many chunks, and which set they are in.
+#[derive(Debug, PartialEq)]
+struct CookieManifest {
+    count: usize,
+    set: Option<&'static str>,
+}
+
+/// `chunks:3:set:b`, or `chunks:3` from before saves alternated.
+fn parse_cookie_manifest(manifest: &str) -> Option<CookieManifest> {
+    let rest = manifest.strip_prefix("chunks:")?;
+    let (count, set) = match rest.split_once(":set:") {
+        Some((count, "a")) => (count, Some("a")),
+        Some((count, "b")) => (count, Some("b")),
+        Some(_) => return None,
+        None => (rest, None),
+    };
+    let count = count.parse::<usize>().ok()?;
+    (count > 0 && count <= YOUTUBE_COOKIE_MAX_CHUNKS).then_some(CookieManifest { count, set })
 }
 
 fn save_youtube_music_cookie_entries(cookie: &str) -> Result<(), CommandError> {
@@ -1753,19 +1775,36 @@ fn save_youtube_music_cookie_entries(cookie: &str) -> Result<(), CommandError> {
         chunks.len(),
         cookie.len()
     );
-    delete_youtube_music_cookie_entries()?;
+    /*
+     * Written into the set the manifest does not point at, then the manifest is switched over in
+     * a single write. Deleting first, as this used to, lost the whole session (every account)
+     * whenever the app quit mid-save: the old entries were gone and the new ones never written.
+     */
+    let current = youtube_cookie_keyring_entry()?
+        .get_password()
+        .ok()
+        .and_then(|manifest| parse_cookie_manifest(&manifest));
+    let next_set = if current.as_ref().and_then(|manifest| manifest.set) == Some("a") { "b" } else { "a" };
     for (index, chunk) in chunks.iter().enumerate() {
-        youtube_cookie_chunk_entry(index)?
+        youtube_cookie_chunk_entry(Some(next_set), index)?
             .set_password(chunk)
             .map_err(|error| CommandError {
                 message: format!("YouTube Music session chunk {index} save failed: {error}"),
             })?;
     }
     youtube_cookie_keyring_entry()?
-        .set_password(&format!("chunks:{}", chunks.len()))
+        .set_password(&format!("chunks:{}:set:{next_set}", chunks.len()))
         .map_err(|error| CommandError {
             message: format!("YouTube Music session manifest save failed: {error}"),
         })?;
+    // Nothing points at the previous set now. Left over, it would only be overwritten later.
+    if let Some(previous) = current {
+        for index in 0..previous.count {
+            if let Ok(entry) = youtube_cookie_chunk_entry(previous.set, index) {
+                let _ = entry.delete_credential();
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1851,6 +1890,8 @@ fn save_youtube_music_cookie(_app: &tauri::AppHandle, cookie: &str) -> Result<()
     save_youtube_music_cookie_entries(cookie)
 }
 
+/// Deletes the stored session: the manifest first, so nothing reads the chunks once deletion
+/// has begun, then every set of chunks.
 fn delete_youtube_music_cookie_entries() -> Result<(), CommandError> {
     match youtube_cookie_keyring_entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => {}
@@ -1861,13 +1902,17 @@ fn delete_youtube_music_cookie_entries() -> Result<(), CommandError> {
         }
     }
 
-    for index in 0..YOUTUBE_COOKIE_MAX_CHUNKS {
-        match youtube_cookie_chunk_entry(index)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => {}
-            Err(error) => {
-                return Err(CommandError {
-                    message: format!("YouTube Music session chunk {index} delete failed: {error}"),
-                });
+    for set in [None, Some("a"), Some("b")] {
+        for index in 0..YOUTUBE_COOKIE_MAX_CHUNKS {
+            match youtube_cookie_chunk_entry(set, index)?.delete_credential() {
+                Ok(()) => {}
+                // A set is numbered from zero without gaps, so its first missing chunk ends it.
+                Err(keyring::Error::NoEntry) => break,
+                Err(error) => {
+                    return Err(CommandError {
+                        message: format!("YouTube Music session chunk {index} delete failed: {error}"),
+                    });
+                }
             }
         }
     }
@@ -1895,21 +1940,14 @@ fn delete_legacy_youtube_credentials() {
 fn load_youtube_music_cookie_entries() -> Result<Option<String>, CommandError> {
     match youtube_cookie_keyring_entry()?.get_password() {
         Ok(manifest) if manifest.starts_with("chunks:") => {
-            let chunk_count = manifest
-                .trim_start_matches("chunks:")
-                .parse::<usize>()
-                .map_err(|error| CommandError {
-                    message: format!("invalid YouTube Music session manifest: {error}"),
+            let CookieManifest { count: chunk_count, set } =
+                parse_cookie_manifest(&manifest).ok_or_else(|| CommandError {
+                    message: "invalid YouTube Music session manifest.".to_string(),
                 })?;
-            if chunk_count == 0 || chunk_count > YOUTUBE_COOKIE_MAX_CHUNKS {
-                return Err(CommandError {
-                    message: "invalid YouTube Music session chunk count.".to_string(),
-                });
-            }
 
             let mut cookie = String::new();
             for index in 0..chunk_count {
-                let chunk = youtube_cookie_chunk_entry(index)?
+                let chunk = youtube_cookie_chunk_entry(set, index)?
                     .get_password()
                     .map_err(|error| CommandError {
                         message: format!(
@@ -5633,6 +5671,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    use super::{parse_cookie_manifest, CookieManifest};
     use super::{
         apply_set_cookie, audio_url_with_range, cookie_account_identity, cookie_domain_matches,
         error_cause_chain, is_slow_persist_cookie, is_youtube_cookie_host, parse_cookie_header, sanitize_log_url,
@@ -6061,6 +6100,17 @@ mod tests {
     #[test]
     fn sanitize_log_url_rejects_unparseable_input() {
         assert_eq!(sanitize_log_url("not a url"), "[redacted-url]");
+    }
+
+    #[test]
+    fn cookie_manifests_name_their_set_and_reject_nonsense() {
+        assert_eq!(parse_cookie_manifest("chunks:3"), Some(CookieManifest { count: 3, set: None }));
+        assert_eq!(parse_cookie_manifest("chunks:3:set:b"), Some(CookieManifest { count: 3, set: Some("b") }));
+        assert_eq!(parse_cookie_manifest("chunks:2:set:a"), Some(CookieManifest { count: 2, set: Some("a") }));
+        assert_eq!(parse_cookie_manifest("chunks:0:set:a"), None);
+        assert_eq!(parse_cookie_manifest("chunks:65"), None);
+        assert_eq!(parse_cookie_manifest("chunks:3:set:c"), None);
+        assert_eq!(parse_cookie_manifest("SAPISID=abc"), None);
     }
 
     #[test]
