@@ -537,7 +537,9 @@ export function reorderLocalPlaylistTracks(
 
 export async function getLocalPlaylistTrackPage(playlist: Playlist): Promise<TrackPage> {
   const stored = getLocalPlaylist(playlist.id);
-  const paths = playlist.localPaths ?? stored?.paths ?? [];
+  // The stored folders, not the ones on `playlist`: that copy was taken when the page opened,
+  // so a folder added since was not scanned until the playlist was opened again.
+  const paths = stored?.paths ?? playlist.localPaths ?? [];
   if (!paths.length) return { tracks: [], hasMore: false };
   const files = await invoke<LocalAudioFile[]>("local_audio_scan", { paths });
   // Songs the user removed. The folder they live in is still assigned, so the scan keeps

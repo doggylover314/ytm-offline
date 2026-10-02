@@ -3,7 +3,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 #[cfg(not(debug_assertions))]
 use portpicker::pick_unused_port;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -702,47 +702,68 @@ fn local_audio_artwork(path: String) -> Result<Option<LocalArtwork>, CommandErro
     }))
 }
 
-fn scan_local_audio_path(path: &Path, files: &mut Vec<LocalAudioFile>) -> Result<(), CommandError> {
-    let metadata = match fs::metadata(path) {
-        Ok(metadata) => metadata,
-        Err(_) => return Ok(()),
+/// Collects the audio files under `path`. Unreadable folders are skipped rather than failing the
+/// whole scan, and each folder is walked once, so one linked back into itself cannot recurse
+/// forever.
+fn scan_local_audio_path(path: &Path, files: &mut Vec<LocalAudioFile>, visited: &mut HashSet<PathBuf>) {
+    let Ok(metadata) = fs::metadata(path) else {
+        return;
     };
 
     if metadata.is_file() {
         if is_local_audio_file(path) {
             files.push(local_audio_entry(path));
         }
-        return Ok(());
+        return;
     }
 
     if !metadata.is_dir() {
-        return Ok(());
+        return;
+    }
+    let Ok(canonical) = fs::canonicalize(path) else {
+        return;
+    };
+    if !visited.insert(canonical) {
+        return;
     }
 
-    let entries = fs::read_dir(path).map_err(|error| CommandError {
-        message: format!("local audio directory read failed: {error}"),
-    })?;
-
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!(
+                "[internal][tauri][warn] local audio folder skipped path={} error={}",
+                path.display(),
+                error
+            );
+            return;
+        }
+    };
     for entry in entries.flatten() {
-        scan_local_audio_path(&entry.path(), files)?;
+        scan_local_audio_path(&entry.path(), files, visited);
     }
-
-    Ok(())
 }
 
+/// Off the main thread: reading every file's tags in a large folder froze the window.
 #[tauri::command]
-fn local_audio_scan(paths: Vec<String>) -> Result<Vec<LocalAudioFile>, CommandError> {
-    let mut files = Vec::new();
-    for path in paths {
-        let trimmed_path = path.trim();
-        if trimmed_path.is_empty() {
-            continue;
+async fn local_audio_scan(paths: Vec<String>) -> Result<Vec<LocalAudioFile>, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut files = Vec::new();
+        let mut visited = HashSet::new();
+        for path in paths {
+            let trimmed_path = path.trim();
+            if trimmed_path.is_empty() {
+                continue;
+            }
+            scan_local_audio_path(Path::new(trimmed_path), &mut files, &mut visited);
         }
-        scan_local_audio_path(Path::new(trimmed_path), &mut files)?;
-    }
-    files.sort_by(|left, right| left.path.to_lowercase().cmp(&right.path.to_lowercase()));
-    files.dedup_by(|left, right| left.path == right.path);
-    Ok(files)
+        files.sort_by(|left, right| left.path.to_lowercase().cmp(&right.path.to_lowercase()));
+        files.dedup_by(|left, right| left.path == right.path);
+        files
+    })
+    .await
+    .map_err(|error| CommandError {
+        message: format!("local audio scan failed: {error}"),
+    })
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -6315,6 +6336,32 @@ mod offline_location_tests {
     /// `CommandError` has no `Debug`, so `unwrap` is unavailable; fail with its message instead.
     fn ok<T>(result: Result<T, super::CommandError>) -> T {
         result.unwrap_or_else(|error| panic!("{}", error.message))
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_folder_scan_skips_unreadable_folders_and_link_loops() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let (root, old_dir, _) = fixture();
+        let music = old_dir.join("music");
+        fs::create_dir_all(music.join("album")).unwrap();
+        fs::write(music.join("album").join("one.mp3"), b"not really audio").unwrap();
+        fs::write(music.join("cover.jpg"), b"image").unwrap();
+        // A link back to the top: walking it naively never ends.
+        symlink(&music, music.join("album").join("loop")).unwrap();
+        let locked = music.join("locked");
+        fs::create_dir_all(&locked).unwrap();
+        fs::write(locked.join("two.mp3"), b"hidden").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let mut files = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        super::scan_local_audio_path(&music, &mut files, &mut visited);
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let names: Vec<String> = files.iter().map(|file| file.title.clone()).collect();
+        assert_eq!(names, vec!["one".to_string()], "found {names:?}");
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
