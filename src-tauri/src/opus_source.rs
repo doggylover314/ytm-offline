@@ -132,6 +132,8 @@ pub(crate) struct OpusSource {
     /// Samples the encoder asks to be thrown away — the codec's own warm-up, not audio.
     skip_samples: usize,
     exhausted: bool,
+    /// Samples in the packet decoded last, which is the current span; see `current_span_len`.
+    span_len: usize,
 }
 
 impl OpusSource {
@@ -200,7 +202,7 @@ impl OpusSource {
          */
         let skip_samples = params.delay.unwrap_or(0) as usize * channel_count;
 
-        Ok(Self {
+        let mut source = Self {
             format,
             decoder,
             track_id,
@@ -210,7 +212,11 @@ impl OpusSource {
             total_duration,
             skip_samples,
             exhausted: false,
-        })
+            span_len: 0,
+        };
+        // The first packet up front, so the first span already has a length.
+        source.fill();
+        Ok(source)
     }
 
     /// Decodes the next packet belonging to our track. False means the stream ended.
@@ -270,6 +276,7 @@ impl OpusSource {
             if decoded.is_empty() {
                 continue;
             }
+            self.span_len = decoded.len();
             self.pending.extend(decoded.iter().copied());
             return true;
         }
@@ -295,9 +302,15 @@ impl Iterator for OpusSource {
 impl Source for OpusSource {
     #[inline]
     fn current_span_len(&self) -> Option<usize> {
-        // Channel count and sample rate never change mid-stream for Opus, so there is only ever
-        // one span and its end is the end of the track.
-        None
+        /*
+         * One decoded packet per span, as rodio's own decoder does. The end of a span is where
+         * rodio looks at the sample rate again, and its speed control works by changing that
+         * rate: with the whole track as one span, a speed change never took effect.
+         */
+        if self.exhausted && self.pending.is_empty() {
+            return Some(0);
+        }
+        Some(self.span_len.max(usize::from(self.channels.get())))
     }
 
     #[inline]

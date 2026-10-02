@@ -18,6 +18,7 @@
 
 use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -201,19 +202,98 @@ struct Deck {
     track_id: Option<String>,
     duration_sec: f64,
     health: Option<DeckHealth>,
+    /// Samples taken from the track so far; see `SongClock`.
+    clock: Arc<AtomicU64>,
+    samples_per_sec: f64,
 }
 
 impl Deck {
+    fn new(sink: Player) -> Self {
+        Deck {
+            sink,
+            track_id: None,
+            duration_sec: 0.0,
+            health: None,
+            clock: Arc::new(AtomicU64::new(0)),
+            samples_per_sec: 0.0,
+        }
+    }
+
     fn clear(&mut self) {
         self.sink.stop();
         self.track_id = None;
         self.duration_sec = 0.0;
         self.health = None;
+        self.clock.store(0, Ordering::Relaxed);
+        self.samples_per_sec = 0.0;
+    }
+
+    /// Where the song is, in the song's own time.
+    fn position_sec(&self) -> f64 {
+        if self.samples_per_sec <= 0.0 {
+            return 0.0;
+        }
+        self.clock.load(Ordering::Relaxed) as f64 / self.samples_per_sec
     }
 
     /// False only when a probe exists and says the source is broken. No probe means healthy.
     fn is_healthy(&self) -> bool {
         self.health.as_ref().is_none_or(|probe| probe())
+    }
+}
+
+/**
+ * Counts the samples taken from a track, which is its position in the song's own time at any
+ * speed.
+ *
+ * rodio's own position is time as heard, and an Opus track is a single span to it, so changing
+ * the speed rescaled everything played since the last seek: the position jumped back and stood
+ * still, and seeking and the end of the track were off by the speed. This sits under rodio's
+ * speed stage, so it sees song time, and a seek arrives here already converted to it.
+ */
+struct SongClock {
+    inner: BoxedSource,
+    samples: Arc<AtomicU64>,
+}
+
+impl Iterator for SongClock {
+    type Item = rodio::Sample;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let sample = self.inner.next();
+        if sample.is_some() {
+            self.samples.fetch_add(1, Ordering::Relaxed);
+        }
+        sample
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl Source for SongClock {
+    fn current_span_len(&self) -> Option<usize> {
+        self.inner.current_span_len()
+    }
+
+    fn channels(&self) -> rodio::ChannelCount {
+        self.inner.channels()
+    }
+
+    fn sample_rate(&self) -> rodio::SampleRate {
+        self.inner.sample_rate()
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        self.inner.total_duration()
+    }
+
+    fn try_seek(&mut self, pos: Duration) -> Result<(), rodio::source::SeekError> {
+        self.inner.try_seek(pos)?;
+        let per_second = f64::from(self.inner.sample_rate().get()) * f64::from(self.inner.channels().get());
+        self.samples.store((pos.as_secs_f64() * per_second) as u64, Ordering::Relaxed);
+        Ok(())
     }
 }
 
@@ -620,18 +700,8 @@ fn run(
         }
     };
     let decks = [
-        Deck {
-            sink: Player::connect_new(stream.mixer()),
-            track_id: None,
-            duration_sec: 0.0,
-            health: None,
-        },
-        Deck {
-            sink: Player::connect_new(stream.mixer()),
-            track_id: None,
-            duration_sec: 0.0,
-            health: None,
-        },
+        Deck::new(Player::connect_new(stream.mixer())),
+        Deck::new(Player::connect_new(stream.mixer())),
     ];
     for deck in &decks {
         deck.sink.pause();
@@ -736,15 +806,21 @@ impl Engine {
                 let volume = if standby { 0.0 } else { self.output_volume() };
                 let rate = self.rate;
 
+                let clock = Arc::new(AtomicU64::new(0));
+                let samples_per_sec =
+                    f64::from(source.sample_rate().get()) * f64::from(source.channels().get());
+
                 let deck = &mut self.decks[index];
                 deck.sink.stop();
-                deck.sink.append(source);
+                deck.sink.append(SongClock { inner: source, samples: Arc::clone(&clock) });
                 deck.sink.pause();
                 deck.sink.set_volume(volume);
                 deck.sink.set_speed(rate);
                 deck.track_id = Some(track_id);
                 deck.duration_sec = duration;
                 deck.health = health;
+                deck.clock = clock;
+                deck.samples_per_sec = samples_per_sec;
 
                 if !standby {
                     self.playing = false;
@@ -782,7 +858,9 @@ impl Engine {
                 self.playing = false;
             }
             Command::Seek(seconds) => {
-                let target = Duration::from_secs_f64(seconds.max(0.0));
+                // rodio's speed stage scales a seek up by the speed on its way to the track, so
+                // the song-time target is scaled down to meet it.
+                let target = Duration::from_secs_f64(seconds.max(0.0) / f64::from(self.rate));
                 if let Err(error) = self.decks[self.active].sink.try_seek(target) {
                     eprintln!("[internal][tauri][warn] native audio seek failed: {error}");
                 }
@@ -881,18 +959,8 @@ impl Engine {
             Command::SetOutputDevice { id, reply } => match open_device_sink(id.as_deref()) {
                 Ok(stream) => {
                     let decks = [
-                        Deck {
-                            sink: Player::connect_new(stream.mixer()),
-                            track_id: None,
-                            duration_sec: 0.0,
-                            health: None,
-                        },
-                        Deck {
-                            sink: Player::connect_new(stream.mixer()),
-                            track_id: None,
-                            duration_sec: 0.0,
-                            health: None,
-                        },
+                        Deck::new(Player::connect_new(stream.mixer())),
+                        Deck::new(Player::connect_new(stream.mixer())),
                     ];
                     for deck in &decks {
                         deck.sink.pause();
@@ -973,7 +1041,7 @@ impl Engine {
             "native-audio-position",
             PositionEvent {
                 track_id,
-                position_sec: self.decks[index].sink.get_pos().as_secs_f64(),
+                position_sec: self.decks[index].position_sec(),
                 duration_sec: self.decks[index].duration_sec,
             },
         );
