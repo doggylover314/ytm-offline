@@ -1151,6 +1151,7 @@ fn app_setting_set(
     key: String,
     value: serde_json::Value,
 ) -> Result<(), CommandError> {
+    refuse_after_reset()?;
     let _guard = lock.0.lock().map_err(|_| CommandError {
         message: "application settings lock unavailable".to_string(),
     })?;
@@ -1229,6 +1230,7 @@ fn app_document_write(
     name: String,
     value: serde_json::Value,
 ) -> Result<(), CommandError> {
+    refuse_after_reset()?;
     let path = app_document_path(&app, &name)?;
     let _guard = lock.0.lock().map_err(|_| CommandError {
         message: "document lock unavailable".to_string(),
@@ -1523,6 +1525,7 @@ fn cache_set(
     key: String,
     value: String,
 ) -> Result<CacheWriteResult, CommandError> {
+    refuse_after_reset()?;
     let _guard = lock
         .0
         .lock()
@@ -1794,6 +1797,7 @@ fn load_or_create_cookie_encryption_key() -> Result<[u8; 32], CommandError> {
 
 #[cfg(target_os = "macos")]
 fn save_youtube_music_cookie(app: &tauri::AppHandle, cookie: &str) -> Result<(), CommandError> {
+    refuse_after_reset()?;
     let key = load_or_create_cookie_encryption_key()?;
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|error| CommandError {
         message: format!("session encryption setup failed: {error}"),
@@ -1822,6 +1826,7 @@ fn save_youtube_music_cookie(app: &tauri::AppHandle, cookie: &str) -> Result<(),
 
 #[cfg(not(target_os = "macos"))]
 fn save_youtube_music_cookie(_app: &tauri::AppHandle, cookie: &str) -> Result<(), CommandError> {
+    refuse_after_reset()?;
     save_youtube_music_cookie_entries(cookie)
 }
 
@@ -3167,6 +3172,149 @@ static OFFLINE_LOCATION: Mutex<Option<Option<PathBuf>>> = Mutex::new(None);
 /// than landing in a directory that is about to be emptied.
 static OFFLINE_MIGRATING: AtomicBool = AtomicBool::new(false);
 
+/// Set once all app data has been deleted. Until the restart that follows, nothing may write
+/// any of it back: a debounced save, a rotated cookie or a download finishing would otherwise
+/// bring part of it back.
+static DATA_RESET: AtomicBool = AtomicBool::new(false);
+
+fn refuse_after_reset() -> Result<(), CommandError> {
+    if DATA_RESET.load(Ordering::SeqCst) {
+        return Err(CommandError {
+            message: "all app data was deleted; the app is restarting".to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Deletes the downloaded audio and covers in `dir`, and `dir` itself once nothing else is in
+/// it. Only the app's own files: a chosen download folder may hold other things.
+fn remove_offline_files(dir: &Path) -> Result<(), CommandError> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let ours = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| matches!(extension, "bin" | "cover" | "part"));
+        if ours && path.is_file() {
+            fs::remove_file(&path)
+                .map_err(|error| cache_error(format!("could not delete {}: {error}", path.display())))?;
+        }
+    }
+    let _ = fs::remove_dir(dir);
+    Ok(())
+}
+
+/// Removes a file or directory if it exists.
+fn remove_path(path: &Path) -> Result<(), String> {
+    let result = if path.is_dir() {
+        fs::remove_dir_all(path)
+    } else if path.exists() {
+        fs::remove_file(path)
+    } else {
+        return Ok(());
+    };
+    result.map_err(|error| format!("could not delete {}: {error}", path.display()))
+}
+
+/// Deletes everything the app keeps on this computer: downloads, the saved records, settings,
+/// the cache, every stored Google account with its sign-in data, and the Last.fm sign-in.
+///
+/// The page clears its own browser storage, and the log starts over on the restart that
+/// follows. Everything is attempted even when one part fails, so one locked file cannot leave
+/// the rest behind.
+#[tauri::command]
+async fn app_data_delete_all(
+    app: tauri::AppHandle,
+    jar: tauri::State<'_, YoutubeCookieJar>,
+    account_lock: tauri::State<'_, AccountStoreLock>,
+) -> Result<(), CommandError> {
+    DATA_RESET.store(true, Ordering::SeqCst);
+    eprintln!("[internal][tauri][info] app_data_delete_all start");
+    let mut failures: Vec<String> = Vec::new();
+
+    // Downloads stop first, so none is still writing into the folder being emptied.
+    offline_download::cancel_all();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while offline_download::any_active() && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    match offline_dir(&app) {
+        Ok(dir) => {
+            if let Err(error) = remove_offline_files(&dir) {
+                failures.push(error.message);
+            }
+        }
+        Err(error) => failures.push(error.message),
+    }
+
+    {
+        let _guard = account_lock.0.lock().map_err(|_| CommandError {
+            message: "account store lock unavailable".to_string(),
+        })?;
+        if let Err(error) = delete_youtube_music_cookie_entries() {
+            failures.push(error.message);
+        }
+        delete_legacy_youtube_credentials();
+    }
+    if let Ok(mut state) = jar.0.lock() {
+        state.cookie = None;
+        state.persisted_at = None;
+    }
+    if let Err(error) = lastfm::lastfm_disconnect() {
+        failures.push(error.message);
+    }
+
+    match app.path().app_data_dir() {
+        Ok(data_dir) => {
+            // Every account's sign-in partition, including ones no stored account points at
+            // any more. None is open while Settings is.
+            if let Ok(entries) = fs::read_dir(&data_dir) {
+                for entry in entries.flatten() {
+                    if entry.file_name().to_string_lossy().starts_with(YOUTUBE_LOGIN_DATA_DIR) {
+                        if let Err(error) = remove_path(&entry.path()) {
+                            failures.push(error);
+                        }
+                    }
+                }
+            }
+            for name in ["documents", APP_SETTINGS_FILE_NAME, OFFLINE_LOCATION_FILE_NAME] {
+                if let Err(error) = remove_path(&data_dir.join(name)) {
+                    failures.push(error);
+                }
+            }
+            #[cfg(target_os = "macos")]
+            if let Err(error) = remove_path(&data_dir.join(YOUTUBE_COOKIE_ENCRYPTED_FILE)) {
+                failures.push(error);
+            }
+        }
+        Err(error) => failures.push(format!("application data directory unavailable: {error}")),
+    }
+    match cache_root(&app) {
+        Ok(cache) => {
+            if let Err(error) = remove_path(&cache) {
+                failures.push(error);
+            }
+        }
+        Err(error) => failures.push(error.message),
+    }
+
+    if failures.is_empty() {
+        eprintln!("[internal][tauri][info] app_data_delete_all complete");
+        Ok(())
+    } else {
+        eprintln!(
+            "[internal][tauri][warn] app_data_delete_all incomplete failures={}",
+            failures.join("; ")
+        );
+        Err(CommandError {
+            message: failures.join("; "),
+        })
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct StoredOfflineLocation {
     dir: PathBuf,
@@ -3262,6 +3410,7 @@ fn offline_artwork_save(
     mime_type: String,
     data_base64: String,
 ) -> Result<(), CommandError> {
+    refuse_after_reset()?;
     let bytes = STANDARD.decode(data_base64).map_err(|error| cache_error(format!("invalid artwork: {error}")))?;
     if bytes.len() > MAX_ARTWORK_BYTES { return Err(cache_error("artwork is too large")); }
     let valid = match mime_type.as_str() {
@@ -3604,6 +3753,7 @@ async fn offline_audio_save(
 ) -> Result<OfflineSaveResult, offline_download::DownloadError> {
     use offline_download::{DownloadError, ErrorKind};
 
+    refuse_after_reset().map_err(|error| DownloadError::new(ErrorKind::Storage, error.message))?;
     let final_path = offline_entry_path(&app, &track_id)
         .map_err(|error| DownloadError::new(ErrorKind::Invalid, error.message))?;
     offline_dir_for_write(&app).map_err(|error| DownloadError::new(ErrorKind::Storage, error.message))?;
@@ -5391,6 +5541,7 @@ pub fn run() {
             fetch_audio_source,
             offline_audio_save,
             window_placement_supported,
+            app_data_delete_all,
             offline_audio_cancel,
             offline_artwork_save,
             offline_artwork_read,
@@ -6151,7 +6302,7 @@ mod tests {
 #[cfg(test)]
 mod offline_location_tests {
     use super::{
-        offline_store_files, resolve_offline_target, roll_back_offline_migration,
+        offline_store_files, remove_offline_files, resolve_offline_target, roll_back_offline_migration,
         tidy_old_offline_dir, transfer_offline_files, OfflineMigrationMode,
         OFFLINE_SUBFOLDER_NAME,
     };
@@ -6164,6 +6315,25 @@ mod offline_location_tests {
     /// `CommandError` has no `Debug`, so `unwrap` is unavailable; fail with its message instead.
     fn ok<T>(result: Result<T, super::CommandError>) -> T {
         result.unwrap_or_else(|error| panic!("{}", error.message))
+    }
+
+    #[test]
+    fn deleting_all_downloads_keeps_other_files_in_a_chosen_folder() {
+        let (root, old_dir, _) = fixture();
+        fs::write(old_dir.join("notes.txt"), b"not ours").unwrap();
+        ok(remove_offline_files(&old_dir));
+        assert_eq!(names(&old_dir), vec!["notes.txt".to_string()]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deleting_all_downloads_removes_a_folder_left_empty() {
+        let (root, old_dir, _) = fixture();
+        ok(remove_offline_files(&old_dir));
+        assert!(!old_dir.exists());
+        // A folder that is already gone is nothing to fail over.
+        ok(remove_offline_files(&old_dir));
+        let _ = fs::remove_dir_all(root);
     }
 
     /// A fresh old/new directory pair holding two tracks, a cover and a half-written download.

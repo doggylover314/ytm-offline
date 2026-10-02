@@ -78,12 +78,7 @@ import {
   isUpdateSnoozed,
   type UpdateInfo,
 } from "../internal/updateChecker";
-import {
-  clearAppSettings,
-  getAppSetting,
-  setAppSetting,
-} from "../internal/appSettings";
-import { clearCache } from "../internal/cache";
+import { getAppSetting, setAppSetting } from "../internal/appSettings";
 import { KeychainNotice, OnboardingWelcome } from "./components/Welcome";
 import { isLinux, isMacOS } from "./platform";
 import { useReduceMotion } from "./settings/renderEffects";
@@ -825,11 +820,11 @@ export default function App() {
     setQueuePanelWidth(360);
     clearAppSession();
 
+    // The backend deletes everything it keeps (downloads, accounts, settings, cache) and
+    // refuses to write any of it back until the restart that follows.
     const results = await Promise.allSettled([
       setAutostartEnabled(false),
-      libraryController.signOut(),
-      clearCache(),
-      clearAppSettings(),
+      invoke("app_data_delete_all"),
     ]);
 
     try {

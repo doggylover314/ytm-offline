@@ -626,7 +626,7 @@ export function SettingsPage({
       active = false;
     };
   }, []);
-  const [resetSettingsConfirming, setResetSettingsConfirming] = useState(false);
+  const [isConfirmingDeleteAll, setIsConfirmingDeleteAll] = useState(false);
   const [resetSettingsBusy, setResetSettingsBusy] = useState(false);
   const [resetSettingsError, setResetSettingsError] = useState<string | null>(null);
   const [localPlaylistName, setLocalPlaylistName] = useState("");
@@ -740,12 +740,6 @@ export function SettingsPage({
     };
   }, []);
 
-  useEffect(() => {
-    if (!resetSettingsConfirming) return undefined;
-    const timeout = window.setTimeout(() => setResetSettingsConfirming(false), 4000);
-    return () => window.clearTimeout(timeout);
-  }, [resetSettingsConfirming]);
-
   const handleCheckForUpdates = async () => {
     setUpdateStatus("checking");
     setUpdateResult(null);
@@ -843,11 +837,7 @@ export function SettingsPage({
 
   const handleClearAllSettings = async () => {
     setResetSettingsError(null);
-    if (!resetSettingsConfirming) {
-      setResetSettingsConfirming(true);
-      return;
-    }
-
+    setIsConfirmingDeleteAll(false);
     setResetSettingsBusy(true);
     try {
       await onDeleteAllAppData();
@@ -855,9 +845,8 @@ export function SettingsPage({
         window.location.reload();
       });
     } catch {
-      setResetSettingsError("Unable to delete all app data.");
+      setResetSettingsError("Some app data couldn't be deleted. Restart the app and try again.");
       setResetSettingsBusy(false);
-      setResetSettingsConfirming(false);
     }
   };
 
@@ -1943,22 +1932,30 @@ export function SettingsPage({
 
             <SettingRow
               title="Delete all app data"
-              description="Reset settings, cache, account, queue, tabs, and local data."
+              description="Downloads, settings, cache, and the Google and Last.fm sign-ins on this computer."
               below={resetSettingsError && <p className={ROW_ERROR}>{resetSettingsError}</p>}
             >
               {() => (
-                <button
-                  className={BUTTON_DESTRUCTIVE}
-                  type="button"
-                  disabled={resetSettingsBusy}
-                  onClick={() => void handleClearAllSettings()}
-                >
-                  {resetSettingsBusy
-                    ? "Deleting..."
-                    : resetSettingsConfirming
-                      ? "Press again to confirm"
-                      : "Delete everything"}
-                </button>
+                <>
+                  <button
+                    className={BUTTON_DESTRUCTIVE}
+                    type="button"
+                    disabled={resetSettingsBusy}
+                    onClick={() => setIsConfirmingDeleteAll(true)}
+                  >
+                    {resetSettingsBusy ? "Deleting..." : "Delete everything"}
+                  </button>
+                  <ConfirmDialog
+                    open={isConfirmingDeleteAll}
+                    title="Delete all app data?"
+                    confirmLabel="Delete everything"
+                    destructive
+                    onCancel={() => setIsConfirmingDeleteAll(false)}
+                    onConfirm={() => void handleClearAllSettings()}
+                  >
+                    {`${downloadedCount > 0 ? `Your ${formatSongCount(downloadedCount)} of downloads (${formatBytes(offlineState.usedBytes)}), ` : ""}settings and cache will be deleted from this computer, and you'll be signed out of Google and Last.fm. Your YouTube Music library isn't affected. The app restarts afterwards.`}
+                  </ConfirmDialog>
+                </>
               )}
             </SettingRow>
           </SettingsSection>

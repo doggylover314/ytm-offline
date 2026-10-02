@@ -125,6 +125,18 @@ pub(crate) fn register(id: &str) -> Option<ActiveDownload> {
 }
 
 /// Asks a running download to stop. Returns whether one was running.
+/// Cancels every download in progress.
+pub(crate) fn cancel_all() {
+    let map = active().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    for flag in map.values() {
+        flag.store(true, Ordering::SeqCst);
+    }
+}
+
+pub(crate) fn any_active() -> bool {
+    !active().lock().unwrap_or_else(|poisoned| poisoned.into_inner()).is_empty()
+}
+
 pub(crate) fn cancel(id: &str) -> bool {
     let map = active().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     match map.get(id) {
