@@ -23,9 +23,10 @@ import { getAppSetting, setAppSetting } from "./appSettings";
  */
 const SEEN_VERSION_KEY = "release-note-seen-version";
 
-export const RELEASE_NOTE_BODY = `**YTM Offline** — a lighter Linux music player with Home, Library, and Downloads.
-**Offline** — save playlists with one click and keep them synced without duplicate audio files.
-**Player** — artwork, lyrics, shuffle, and the mini-player remain close at hand.
+export const RELEASE_NOTE_BODY = `**Downloads** — playlists really download now and stay in sync. Progress and problems are on the Downloads page.
+**Offline** — downloaded songs play without a connection, and songs that aren't downloaded are skipped.
+**Updates** — a new version installs over the old one and keeps your downloads, sign-in, and settings.
+**Player** — playback speed, crossfade, shuffle, and repeat behave, and most songs have synced lyrics.
 
 Report anything broken at https://github.com/doggylover314/ytm-offline/issues.`;
 
