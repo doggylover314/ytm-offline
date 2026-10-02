@@ -131,7 +131,15 @@ async fn signed_lastfm_post<T: for<'de> Deserialize<'de>>(
     params.insert("api_sig".to_string(), signature);
     params.insert("format".to_string(), "json".to_string());
 
-    let response = reqwest::Client::new()
+    // Timeouts as for every other request, so an unanswered scrobble cannot hang.
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .read_timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|error| CommandError {
+            message: format!("Last.fm request failed: {error}"),
+        })?;
+    let response = client
         .post(LASTFM_API_URL)
         .form(&params)
         .send()

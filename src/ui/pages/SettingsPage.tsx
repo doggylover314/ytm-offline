@@ -157,7 +157,7 @@ import {
   removeLocalPlaylistPath,
   subscribeToLocalPlaylists,
 } from "../../player/localPlaylists";
-import { LastFmService, type LastFmAuthStart, type LastFmSessionStatus } from "../../player/LastFm";
+import { LastFmService, useLastFmProblem, type LastFmAuthStart, type LastFmSessionStatus } from "../../player/LastFm";
 import { DiscordRpcService } from "../../player/DiscordRPC";
 import { useDiscordPresenceEnabled } from "../settings/discord";
 import {
@@ -637,6 +637,7 @@ export function SettingsPage({
   const [lastFmAuth, setLastFmAuth] = useState<LastFmAuthStart | null>(null);
   const [lastFmBusy, setLastFmBusy] = useState(false);
   const [lastFmError, setLastFmError] = useState<string | null>(null);
+  const lastFmProblem = useLastFmProblem();
   const [activeTab, setActiveTab] = useState<SettingsTab>("account");
   const [listeningShortcut, setListeningShortcut] = useState<KeyboardShortcutAction | null>(null);
   const keyboardShortcuts = useKeyboardShortcuts();
@@ -1796,7 +1797,7 @@ export function SettingsPage({
                     ? "Disconnecting stops future Last.fm updates from this app."
                     : "Connect Last.fm to scrobble your listening history. A browser window will open so you can approve this app."
               }
-              below={lastFmError && <p className={ROW_ERROR}>{lastFmError}</p>}
+              below={(lastFmError ?? lastFmProblem) && <p className={ROW_ERROR}>{lastFmError ?? lastFmProblem}</p>}
             >
               {() => lastFmSession ? (
                 <button

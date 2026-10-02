@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Track } from "../datasource/types";
@@ -45,6 +46,36 @@ interface TrackedTrackState {
 
 const MIN_SCROBBLE_DURATION_SEC = 31;
 const MAX_THRESHOLD_SEC = 240;
+/** How soon a session check that failed (the keyring busy, say) is made again. */
+const SESSION_RECHECK_MS = 60_000;
+/** A song back this close to its start after being scrobbled is being played again. */
+const REPLAY_START_SEC = 5;
+
+/*
+ * The last thing that went wrong with scrobbling, for Settings to show. Failures used to go to
+ * the log only, so a revoked session looked exactly like scrobbling working.
+ */
+let problem: string | null = null;
+const problemListeners = new Set<() => void>();
+
+function setProblem(next: string | null): void {
+  if (problem === next) return;
+  problem = next;
+  for (const listener of problemListeners) listener();
+}
+
+export function useLastFmProblem(): string | null {
+  return useSyncExternalStore(
+    (listener) => {
+      problemListeners.add(listener);
+      return () => {
+        problemListeners.delete(listener);
+      };
+    },
+    () => problem,
+    () => null,
+  );
+}
 
 function cleanText(value?: string): string {
   return value?.replace(/\s+/g, " ").trim() ?? "";
@@ -86,6 +117,7 @@ function scrobbleThreshold(duration?: number): number | null {
 export class LastFmService {
   private static tracked: TrackedTrackState | null = null;
   private static sessionChecked = false;
+  private static sessionCheckFailedAt = 0;
   private static hasSession = false;
 
   static async startAuth(): Promise<LastFmAuthStart> {
@@ -98,6 +130,7 @@ export class LastFmService {
     const session = await invoke<LastFmSessionStatus>("lastfm_complete_auth", { token });
     this.sessionChecked = true;
     this.hasSession = true;
+    setProblem(null);
     return session;
   }
 
@@ -113,6 +146,7 @@ export class LastFmService {
     this.sessionChecked = true;
     this.hasSession = false;
     this.tracked = null;
+    setProblem(null);
   }
 
   static updatePlayback(update: PlaybackUpdate): void {
@@ -129,7 +163,11 @@ export class LastFmService {
 
     const key = trackKey(update.track, payload);
     const nowMs = Date.now();
-    if (!this.tracked || this.tracked.key !== key) {
+    // The same song again (repeat one, or played over): a new play to scrobble, not the old one.
+    const replayed = this.tracked?.key === key
+      && this.tracked.scrobbled
+      && update.currentTime < REPLAY_START_SEC;
+    if (!this.tracked || this.tracked.key !== key || replayed) {
       this.tracked = {
         key,
         payload,
@@ -169,16 +207,29 @@ export class LastFmService {
 
   private static async ensureSession(): Promise<boolean> {
     if (this.sessionChecked) return this.hasSession;
+    // A failed check is tried again later, not taken as "not connected" for the rest of the run.
+    if (Date.now() - this.sessionCheckFailedAt < SESSION_RECHECK_MS) return false;
     try {
       await this.getSession();
     } catch (error) {
       logInternalWarn("LastFm.sessionCheck.failed", {
         error: error instanceof Error ? error.message : String(error),
       });
-      this.sessionChecked = true;
-      this.hasSession = false;
+      this.sessionCheckFailedAt = Date.now();
+      return false;
     }
     return this.hasSession;
+  }
+
+  /** Records a failed request; a session Last.fm no longer accepts stops scrobbling. */
+  private static reportFailure(error: unknown): void {
+    const message = error instanceof Error ? error.message : String((error as { message?: string })?.message ?? error);
+    if (/invalid session|re-?authenticate/i.test(message)) {
+      this.hasSession = false;
+      setProblem("Last.fm no longer accepts this connection. Connect again to keep scrobbling.");
+      return;
+    }
+    setProblem(`Scrobbling to Last.fm failed: ${message}`);
   }
 
   private static async updateNowPlaying(payload: LastFmTrackPayload): Promise<void> {
@@ -191,8 +242,9 @@ export class LastFmService {
       });
     } catch (error) {
       logInternalWarn("LastFm.nowPlaying.failed", {
-        error: error instanceof Error ? error.message : String(error),
+        error: error instanceof Error ? error.message : String((error as { message?: string })?.message ?? error),
       });
+      this.reportFailure(error);
     }
   }
 
@@ -200,14 +252,16 @@ export class LastFmService {
     if (!await this.ensureSession()) return;
     try {
       await invoke("lastfm_scrobble", { input: payload });
+      setProblem(null);
       logInternalDebug("LastFm.scrobble.success", {
         artist: payload.artist,
         track: payload.track,
       });
     } catch (error) {
       logInternalWarn("LastFm.scrobble.failed", {
-        error: error instanceof Error ? error.message : String(error),
+        error: error instanceof Error ? error.message : String((error as { message?: string })?.message ?? error),
       });
+      this.reportFailure(error);
     }
   }
 }
