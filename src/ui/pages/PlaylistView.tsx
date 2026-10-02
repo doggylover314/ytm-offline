@@ -537,6 +537,15 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
   const sortedTracksRef = useRef(sortedTracks);
   sortedTracksRef.current = sortedTracks;
 
+  /*
+   * Dragging only in the playlist's own order. A move is saved against that order, so dragging
+   * a sorted or filtered list sent moves that landed somewhere else entirely.
+   */
+  const canDragTracks = canReorderTracks
+    && sort === "dateAdded"
+    && sortDirection === "desc"
+    && !playlistSearchQuery.trim();
+
   const visibleTracks = useMemo(() => {
     const query = playlistSearchQuery.trim().toLocaleLowerCase();
     if (!query) return sortedTracks;
@@ -556,7 +565,7 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
    * would move whichever copy came first.
    */
   useEffect(() => {
-    if (!canReorderTracks) return;
+    if (!canDragTracks) return;
 
     const handlePointerMove = (event: PointerEvent) => {
       const drag = pointerDragRef.current;
@@ -658,7 +667,7 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerUp);
     };
-  }, [canReorderTracks, libraryController, playlist]);
+  }, [canDragTracks, libraryController, playlist]);
 
   if (!playlist) return null;
 
@@ -734,7 +743,7 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
   };
 
   const handlePointerDown = (event: React.PointerEvent, track: Track) => {
-    if (!canReorderTracks || event.button !== 0) return;
+    if (!canDragTracks || event.button !== 0) return;
     pointerDragRef.current = {
       pointerId: event.pointerId,
       localPath: track.localPath ?? track.playlistItemId ?? track.id,
