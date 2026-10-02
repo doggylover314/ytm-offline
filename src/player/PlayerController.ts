@@ -355,6 +355,9 @@ export class PlayerController {
 
   async loadTrack(track: Track): Promise<void> {
     logInternalInfo("PlayerController.loadTrack start", { trackId: track.id });
+    // Supersedes a play still loading, which would otherwise finish later and start the song
+    // this one replaced.
+    this.playTrackRequestId += 1;
     this.pendingSeekTime = null;
     this.setState({ status: "loading", error: null });
     try {
@@ -1253,7 +1256,11 @@ export class PlayerController {
     return shuffled;
   }
 
-  private async ensureTrackLoaded(track: Track): Promise<void> {
+  /**
+   * Loads `track` into the engine unless it is there already. `startsPlayback` says whether
+   * playing follows: only then may a preloaded deck take over, because taking over starts it.
+   */
+  private async ensureTrackLoaded(track: Track, startsPlayback = true): Promise<void> {
     logInternalDebug("PlayerController.ensureTrackLoaded start", {
       trackId: track.id,
       loadedTrackId: this.loadedTrackId,
@@ -1273,13 +1280,16 @@ export class PlayerController {
        * handover is a volume ramp between two live players — no load, and no silence between
        * them. A zero-length fade is the gapless case and swaps in the same tick.
        */
-      if (this.usesPreloadDeck(track) && this.audioEngine.hasPreloaded(track.id)) {
+      if (startsPlayback && this.usesPreloadDeck(track) && this.audioEngine.hasPreloaded(track.id)) {
         const fadeSec = this.transitionFadeSec ?? this.crossfadeSec;
         this.transitionFadeSec = null;
         const swapped = await this.audioEngine.transitionToPreloaded(track.id, fadeSec * 1000);
         if (swapped) {
           this.loadedTrackId = track.id;
-          this.pendingSeekTime = null;
+          if (this.pendingSeekTime !== null) {
+            this.audioEngine.seekTo(this.pendingSeekTime);
+            this.pendingSeekTime = null;
+          }
           // The deck already holds these bytes, so the slot is stale rather than useful.
           this.claimWarmedStream(track.id);
           logInternalInfo("PlayerController.ensureTrackLoaded preloaded deck", {
@@ -1779,7 +1789,11 @@ export class PlayerController {
       logInternalInfo("PlayerController.seekTo track not loaded, loading...", { trackId: currentTrack.id });
       this.pendingSeekTime = seekTime;
       try {
-        await this.ensureTrackLoaded(currentTrack);
+        /*
+         * Loaded without taking over a preloaded deck: that starts the deck playing, so a seek
+         * while paused set the song going underneath a paused player, and lost the position.
+         */
+        await this.ensureTrackLoaded(currentTrack, this.state.status === "playing");
       } catch (error) {
         this.setError(error);
       }
