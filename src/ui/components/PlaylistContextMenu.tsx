@@ -252,7 +252,8 @@ export function PlaylistContextMenuProvider({
     showPersistentToast("Preparing export...");
 
     try {
-      const tracks = await libraryController.getPlaylistTracks(target);
+      // Fresh: a backup of the copy stored last week would be missing this week's songs.
+      const tracks = await libraryController.getPlaylistTracks(target, undefined, { fresh: true });
       const result = await exportPlaylist(target, tracks);
       if (!result) {
         setToast(null);

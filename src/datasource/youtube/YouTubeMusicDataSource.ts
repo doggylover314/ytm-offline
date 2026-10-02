@@ -176,6 +176,8 @@ type PlaylistPageSession = {
   playlistId: string;
   playlistPage: YouTubeMusicPlaylistPage;
   seenTrackIds: Set<string>;
+  /** Every track read so far in this walk, in order; stored once the walk reaches the end. */
+  collected: Track[];
   expiresAt: number;
 };
 
@@ -384,6 +386,8 @@ const ARTIST_CACHE_VERSION = "v9";
 const ARTIST_REFRESH_COOLDOWN_MS = 60_000;
 const ARTIST_SUBSCRIPTION_OVERRIDE_MS = 60_000;
 const PLAYLIST_PAGE_SESSION_TTL_MS = 10 * 60_000;
+/** A playlist this many pages long (100 songs each) is a paging loop, not a real playlist. */
+const PLAYLIST_MAX_PAGES = 500;
 /** How long an edit made here is laid over YouTube's own playlist listing, which lags it. */
 const PENDING_PLAYLIST_EDIT_MS = 10 * 60_000;
 const PLAYLIST_TRACK_CACHE_VERSION = "v6";
@@ -435,7 +439,7 @@ export class YouTubeMusicDataSource extends DataSource {
   /** Playlist edits made here that YouTube's listing may not show yet; see `applyPlaylistEdits`. */
   private readonly pendingPlaylistEdits = new Map<string, PendingPlaylistEdit>();
   private readonly albumRefreshPromises = new Map<string, Promise<Track[]>>();
-  private readonly playlistRefreshPromises = new Map<string, Promise<Track[]>>();
+  private readonly playlistRefreshPromises = new Map<string, Promise<{ tracks: Track[]; complete: boolean }>>();
   private readonly playlistPageSessions = new Map<string, PlaylistPageSession>();
   private readonly trackRefreshPromises = new Map<string, Promise<Track>>();
   private readonly searchRefreshPromises = new Map<string, Promise<Track[]>>();
@@ -2055,56 +2059,53 @@ export class YouTubeMusicDataSource extends DataSource {
     return tracks;
   }
 
-  private async collectPlaylistTracks(client: Innertube, playlistId: string): Promise<Track[]> {
-    const browseId = playlistId.startsWith("VL") ? playlistId : `VL${playlistId}`;
-    let page = await this.executeMusicBrowse(client, { browseId });
-    let pageCount = 0;
-    const items: MusicItem[] = [];
-    const seenContinuations = new Set<string>();
+  /**
+   * Every track of a playlist, and whether all of it was read. A page that fails mid-walk keeps
+   * what came before it (the library sync would rather show most of a playlist than none of it),
+   * but such a list is never stored as the playlist.
+   *
+   * Walks the pages the same way the playlist view does. The hand-rolled continuation reader
+   * this used before found no second page on long playlists and stopped at about a hundred
+   * songs as if that were all of them, so exports and Liked Songs came out cut short.
+   */
+  private async collectPlaylistTracks(
+    client: Innertube,
+    playlistId: string,
+  ): Promise<{ tracks: Track[]; complete: boolean }> {
+    let page = await client.music.getPlaylist(playlistId) as YouTubeMusicPlaylistPage;
+    const seenTrackIds = new Set<string>();
+    const tracks = this.collectParsedPlaylistPageTracks(page, seenTrackIds);
+    let pageCount = 1;
+    let complete = true;
 
-    while (true) {
-      const pageItems = this.collectMusicItems(page, new Set(["song", "video"]));
-      items.push(...pageItems);
-      pageCount += 1;
-
-      const continuation = this.getMusicContinuation(client, page);
-      if (!continuation) break;
-      if (seenContinuations.has(continuation.key)) {
-        logInternalWarn("YouTubeMusicDataSource.collectPlaylistTracks repeated page", {
-          playlistId,
-          pageCount,
-          continuationKey: continuation.key,
-        });
+    while (page.has_continuation) {
+      if (pageCount >= PLAYLIST_MAX_PAGES) {
+        logInternalWarn("YouTubeMusicDataSource.collectPlaylistTracks too many pages", { playlistId, pageCount });
+        complete = false;
         break;
       }
-
-      seenContinuations.add(continuation.key);
       try {
-        page = await continuation.load();
+        page = await page.getContinuation();
       } catch (error) {
-        // Keep the pages already read: a long playlist that loses one request mid-walk is
-        // still mostly here, and throwing would fail the whole library sync over it.
         logInternalWarn("YouTubeMusicDataSource.collectPlaylistTracks continuation failed", {
           playlistId,
           pageCount,
           error: error instanceof Error ? error.message : String(error),
         });
+        complete = false;
         break;
       }
+      tracks.push(...this.collectParsedPlaylistPageTracks(page, seenTrackIds));
+      pageCount += 1;
     }
 
-    const tracks = this.uniqueById(
-      this.songOrVideoItems(items)
-        .map((item) => this.toTrack(item))
-        .filter((item): item is Track => Boolean(item)),
-    );
     logInternalInfo("YouTubeMusicDataSource.collectPlaylistTracks complete", {
       playlistId,
-      browseId,
       pageCount,
       trackCount: tracks.length,
+      complete,
     });
-    return tracks;
+    return { tracks, complete };
   }
 
   private async waitForPlaylistEmptyRetry(attempt: number): Promise<void> {
@@ -2117,12 +2118,12 @@ export class YouTubeMusicDataSource extends DataSource {
     client: Innertube,
     playlistId: string,
     source: string,
-  ): Promise<Track[]> {
+  ): Promise<{ tracks: Track[]; complete: boolean }> {
     for (let attempt = 0; attempt < PLAYLIST_EMPTY_RETRY_DELAYS_MS.length; attempt += 1) {
       await this.waitForPlaylistEmptyRetry(attempt);
 
-      const tracks = await this.collectPlaylistTracks(client, playlistId);
-      if (tracks.length > 0) return tracks;
+      const result = await this.collectPlaylistTracks(client, playlistId);
+      if (result.tracks.length > 0) return result;
 
       const browseId = playlistId.startsWith("VL") ? playlistId : `VL${playlistId}`;
       logInternalWarn("YouTubeMusicDataSource.collectPlaylistTracksWithEmptyRetries retrying empty response", {
@@ -2133,11 +2134,12 @@ export class YouTubeMusicDataSource extends DataSource {
       });
 
       const response = await this.executeMusicBrowse(client, { browseId });
+      // This walk throws on a failed page, so a list that comes back is the whole playlist.
       const fallbackTracks = await this.collectAllTracks(client, response);
-      if (fallbackTracks.length > 0) return fallbackTracks;
+      if (fallbackTracks.length > 0) return { tracks: fallbackTracks, complete: true };
     }
 
-    return [];
+    return { tracks: [], complete: true };
   }
 
   private createPlaylistPageKey(playlistId: string): string {
@@ -2171,13 +2173,13 @@ export class YouTubeMusicDataSource extends DataSource {
     return `youtube-music:playlist-tracks:${PLAYLIST_TRACK_CACHE_VERSION}:${playlistId}`;
   }
 
-  private async cachePlaylistTracks(playlistId: string, tracks: Track[]): Promise<Track[]> {
-    if (tracks.length === 0) return tracks;
-    const cacheKey = this.getPlaylistTrackCacheKey(playlistId);
-    const cached = await getCachedJson<Track[]>(cacheKey);
-    const merged = this.uniqueById([...(cached ?? []), ...tracks]);
-    await setCachedJson(cacheKey, merged);
-    return merged;
+  /*
+   * Stores a playlist's complete track list, replacing the last one. Never merged: a merge kept
+   * songs removed on YouTube forever and the old order over a new one, and must never be given
+   * a partial list, which would read as the whole playlist.
+   */
+  private async storePlaylistTracks(playlistId: string, tracks: Track[]): Promise<void> {
+    await setCachedJson(this.getPlaylistTrackCacheKey(playlistId), tracks);
   }
 
   private getAlbumHeaderArtwork(response: unknown): string | undefined {
@@ -2374,8 +2376,9 @@ export class YouTubeMusicDataSource extends DataSource {
   private async getLikedSongs(client: Innertube): Promise<{
     playlist: Playlist;
     tracks: Track[];
+    complete: boolean;
   }> {
-    const tracks = await this.collectPlaylistTracks(client, LIKED_SONGS_PLAYLIST_ID);
+    const { tracks, complete } = await this.collectPlaylistTracks(client, LIKED_SONGS_PLAYLIST_ID);
 
     return {
       playlist: {
@@ -2385,6 +2388,7 @@ export class YouTubeMusicDataSource extends DataSource {
         kind: "liked-songs",
       },
       tracks,
+      complete,
     };
   }
 
@@ -3363,7 +3367,9 @@ export class YouTubeMusicDataSource extends DataSource {
       ...librarySongs.flatMap((track) => track.artists ?? []),
     ]);
     const historyMessages = this.getResponseMessages(historyResponse);
-    await this.cachePlaylistTracks(LIKED_SONGS_PLAYLIST_ID, likedSongsResult.tracks);
+    if (likedSongsResult.complete) {
+      await this.storePlaylistTracks(LIKED_SONGS_PLAYLIST_ID, likedSongsResult.tracks);
+    }
 
     if (libraryMessages.length > 0 && albums.length === 0) {
       throw new YouTubeMusicAuthError(
@@ -4024,9 +4030,13 @@ export class YouTubeMusicDataSource extends DataSource {
     };
   }
 
-  async getPlaylistTracks(playlist: Playlist, onUpdate?: (tracks: Track[]) => void): Promise<Track[]> {
+  async getPlaylistTracks(
+    playlist: Playlist,
+    onUpdate?: (tracks: Track[]) => void,
+    fresh = false,
+  ): Promise<Track[]> {
     const cacheKey = this.getPlaylistTrackCacheKey(playlist.id);
-    const cached = await getCachedJson<Track[]>(cacheKey);
+    const cached = fresh ? null : await getCachedJson<Track[]>(cacheKey);
 
     if (cached?.length) {
       globalThis.setTimeout(() => {
@@ -4071,6 +4081,7 @@ export class YouTubeMusicDataSource extends DataSource {
     let page: YouTubeMusicPlaylistPage;
     let sessionKey = pageKey;
     let seenTrackIds = new Set<string>();
+    let collected: Track[] = [];
     let tracks: Track[] = [];
 
     if (pageKey) {
@@ -4094,6 +4105,7 @@ export class YouTubeMusicDataSource extends DataSource {
       }
 
       seenTrackIds = session.seenTrackIds;
+      collected = session.collected;
       page = session.playlistPage;
 
       for (let attempts = 0; attempts < 100 && page.has_continuation && tracks.length === 0; attempts += 1) {
@@ -4110,40 +4122,33 @@ export class YouTubeMusicDataSource extends DataSource {
         tracks = this.collectParsedPlaylistPageTracks(page, seenTrackIds);
       }
     } else {
+      /*
+       * Always the playlist as YouTube has it now. The cached copy above only fills the screen
+       * until this arrives; mixing it in kept removed songs and an old order forever.
+       */
       page = await client.music.getPlaylist(playlist.id) as YouTubeMusicPlaylistPage;
-      if (cachedTracks?.length) {
-        seenTrackIds = new Set(cachedTracks.map((track) => track.id));
-        const freshTracks = this.collectParsedPlaylistPageTracks(page, seenTrackIds);
-        tracks = freshTracks.length > 0
-          ? await this.cachePlaylistTracks(playlist.id, freshTracks)
-          : cachedTracks;
-        seenTrackIds = new Set(tracks.map((track) => track.id));
-      } else {
-        tracks = this.collectParsedPlaylistPageTracks(page, seenTrackIds);
-      }
+      tracks = this.collectParsedPlaylistPageTracks(page, seenTrackIds);
 
-      if (!cachedTracks?.length && tracks.length === 0 && !page.has_continuation) {
+      if (tracks.length === 0 && !page.has_continuation) {
         logInternalWarn("YouTubeMusicDataSource.getPlaylistTrackPage verifying empty first page", {
           playlistId: playlist.id,
         });
-        const fallbackTracks = await this.collectPlaylistTracksWithEmptyRetries(
+        const fallback = await this.collectPlaylistTracksWithEmptyRetries(
           client,
           playlist.id,
           "paged-first-load",
         );
-        if (fallbackTracks.length > 0) {
-          const cachedFallbackTracks = await this.cachePlaylistTracks(playlist.id, fallbackTracks);
-          return { tracks: cachedFallbackTracks, hasMore: false };
-        }
+        if (fallback.complete) await this.storePlaylistTracks(playlist.id, fallback.tracks);
+        return { tracks: fallback.tracks, hasMore: false };
       }
     }
 
-    if (tracks.length > 0) {
-      await this.cachePlaylistTracks(playlist.id, tracks);
-    }
+    collected = [...collected, ...tracks];
 
     if (!page.has_continuation) {
       if (sessionKey) this.playlistPageSessions.delete(sessionKey);
+      // The walk reached the end, so this is the whole playlist and replaces the stored one.
+      await this.storePlaylistTracks(playlist.id, collected);
       logInternalInfo("YouTubeMusicDataSource.getPlaylistTrackPage complete", {
         playlistId: playlist.id,
         trackCount: tracks.length,
@@ -4162,6 +4167,7 @@ export class YouTubeMusicDataSource extends DataSource {
       playlistId: playlist.id,
       playlistPage: page,
       seenTrackIds,
+      collected,
       expiresAt: Date.now() + PLAYLIST_PAGE_SESSION_TTL_MS,
     });
 
@@ -4185,14 +4191,15 @@ export class YouTubeMusicDataSource extends DataSource {
       this.playlistRefreshPromises.set(playlist.id, refresh);
     }
 
-    const value = await refresh;
-    const changed = value.length > 0
-      ? await setCachedJson(cacheKey, value)
-      : false;
+    const { tracks: value, complete } = await refresh;
+    // Anything that asks for a playlist's tracks expects all of them; an export must never be
+    // silently cut short.
+    if (!complete) throw new Error("Part of this playlist couldn't be loaded. Try again.");
+    const changed = await setCachedJson(cacheKey, value);
     return { changed, value };
   }
 
-  private async fetchPlaylistTracksFresh(playlist: Playlist): Promise<Track[]> {
+  private async fetchPlaylistTracksFresh(playlist: Playlist): Promise<{ tracks: Track[]; complete: boolean }> {
     const client = await this.getMusicClient();
     return this.collectPlaylistTracksWithEmptyRetries(client, playlist.id, "fresh-load");
   }
@@ -4361,10 +4368,10 @@ export class YouTubeMusicDataSource extends DataSource {
       const client = await this.getMusicClient();
       const cacheKey = this.getPlaylistTrackCacheKey(playlist.id);
       const cachedTracks = await getCachedJson<Track[]>(cacheKey);
-      const existingTracks = cachedTracks
-        ?? await this.collectPlaylistTracks(client, playlist.id);
+      const fetched = cachedTracks ? null : await this.collectPlaylistTracks(client, playlist.id);
+      const existingTracks = cachedTracks ?? fetched?.tracks ?? [];
       if (existingTracks.some((item) => item.id === track.id)) {
-        if (!cachedTracks) await setCachedJson(cacheKey, existingTracks);
+        if (fetched?.complete) await this.storePlaylistTracks(playlist.id, fetched.tracks);
         logInternalInfo("YouTubeMusicDataSource.addTrackToPlaylist already present", {
           trackId: track.id,
           playlistId: playlist.id,
@@ -4375,24 +4382,25 @@ export class YouTubeMusicDataSource extends DataSource {
 
       await client.playlist.addVideos(this.editablePlaylistId(playlist.id), [track.id]);
 
-      let confirmedTracks: Track[] | null = null;
+      let confirmed: { tracks: Track[]; complete: boolean } | null = null;
       for (const delayMs of [0, 500, 1500]) {
         if (delayMs > 0) {
           await new Promise<void>((resolve) => globalThis.setTimeout(resolve, delayMs));
         }
 
-        const tracks = await this.collectPlaylistTracks(client, playlist.id);
-        if (tracks.some((item) => item.id === track.id)) {
-          confirmedTracks = tracks;
+        const result = await this.collectPlaylistTracks(client, playlist.id);
+        if (result.tracks.some((item) => item.id === track.id)) {
+          confirmed = result;
           break;
         }
       }
 
-      if (!confirmedTracks) {
+      if (!confirmed) {
         throw new Error("YouTube Music did not confirm the playlist update.");
       }
 
-      await setCachedJson(cacheKey, confirmedTracks);
+      // A partial read is not the playlist; dropping the cache makes the next look fetch it.
+      await this.storePlaylistTracks(playlist.id, confirmed.complete ? confirmed.tracks : []);
 
       logInternalInfo("YouTubeMusicDataSource.addTrackToPlaylist success", {
         trackId: track.id,
@@ -4616,9 +4624,10 @@ export class YouTubeMusicDataSource extends DataSource {
       }
       const likedSongsCacheKey = this.getPlaylistTrackCacheKey(LIKED_SONGS_PLAYLIST_ID);
       const cachedLikedSongs = await getCachedJson<Track[]>(likedSongsCacheKey);
-      if (liked) {
-        await this.cachePlaylistTracks(LIKED_SONGS_PLAYLIST_ID, [track]);
-      } else if (cachedLikedSongs) {
+      if (liked && cachedLikedSongs) {
+        // Newest first, as Liked Songs lists them.
+        await setCachedJson(likedSongsCacheKey, this.uniqueById([track, ...cachedLikedSongs]));
+      } else if (!liked && cachedLikedSongs) {
         await setCachedJson(
           likedSongsCacheKey,
           cachedLikedSongs.filter((item) => item.id !== track.id),

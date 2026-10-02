@@ -696,7 +696,11 @@ export class LibraryController {
     }
   }
 
-  async getPlaylistTracks(playlist: Playlist, onUpdate?: (tracks: Track[]) => void): Promise<Track[]> {
+  async getPlaylistTracks(
+    playlist: Playlist,
+    onUpdate?: (tracks: Track[]) => void,
+    options: { fresh?: boolean } = {},
+  ): Promise<Track[]> {
     if (isLocalPlaylist(playlist)) {
       const page = await getLocalPlaylistTrackPage(playlist);
       if (page.tracks.length > 0) onUpdate?.(page.tracks);
@@ -709,6 +713,7 @@ export class LibraryController {
     const tracks = await this.dataSource.getPlaylistTracks(
       playlist,
       (updatedTracks) => onUpdate?.(mergeLocalTracks(updatedTracks)),
+      options.fresh,
     );
     return mergeLocalTracks(tracks);
   }

@@ -135,7 +135,8 @@ export abstract class DataSource {
   getArtist?(artistId: string, onUpdate?: (artist: ArtistPage) => void): Promise<ArtistPage>;
   setArtistSubscribed?(artistId: string, subscribed: boolean): Promise<void>;
   setArtistNotificationLevel?(artistId: string, level: ArtistNotificationLevel): Promise<void>;
-  getPlaylistTracks?(playlist: Playlist, onUpdate?: (tracks: Track[]) => void): Promise<Track[]>;
+  /** Every track. `fresh` skips the stored copy, for when a stale list would be wrong. */
+  getPlaylistTracks?(playlist: Playlist, onUpdate?: (tracks: Track[]) => void, fresh?: boolean): Promise<Track[]>;
   getPlaylistTrackPage?(
     playlist: Playlist,
     pageKey?: string,
