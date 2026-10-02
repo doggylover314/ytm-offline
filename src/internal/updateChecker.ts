@@ -34,27 +34,37 @@ function isNewerVersion(installed: string, candidate: string): boolean {
   return false;
 }
 
+/**
+ * The newest release, or null when this build is the newest. A check that could not be made
+ * throws: it used to return null too, and the app then said "You are up to date" with no
+ * connection or while GitHub was turning requests away.
+ */
 async function checkViaGithubApi(): Promise<UpdateInfo | null> {
+  let response: Response;
   try {
-    const response = await fetch(RELEASES_API_URL);
-    if (!response.ok) return null;
-    const data = await response.json() as { tag_name?: string };
-    const tagName = data.tag_name ?? "";
-    const latestVersion = tagName.replace(RELEASE_TAG_PREFIX, "");
-    const installedVersion = await getVersion();
-
-    if (!latestVersion || !isNewerVersion(installedVersion, latestVersion)) {
-      return null;
-    }
-
-    return {
-      installedVersion,
-      version: latestVersion,
-      releaseUrl: `${RELEASES_URL}/${encodeURIComponent(tagName || latestVersion)}`,
-    };
+    response = await fetch(RELEASES_API_URL, { headers: { Accept: "application/vnd.github+json" } });
   } catch {
-    return null;
+    throw new Error("Couldn't reach GitHub.");
   }
+  // Nothing published yet, so nothing is newer than this build.
+  if (response.status === 404) return null;
+  if (response.status === 403 || response.status === 429) {
+    throw new Error("GitHub is limiting requests right now. Try again later.");
+  }
+  if (!response.ok) throw new Error(`GitHub answered ${response.status}.`);
+
+  const data = await response.json() as { tag_name?: string };
+  const tagName = data.tag_name ?? "";
+  const latestVersion = tagName.replace(RELEASE_TAG_PREFIX, "");
+  if (!latestVersion) throw new Error("GitHub's answer named no version.");
+  const installedVersion = await getVersion();
+  if (!isNewerVersion(installedVersion, latestVersion)) return null;
+
+  return {
+    installedVersion,
+    version: latestVersion,
+    releaseUrl: `${RELEASES_URL}/${encodeURIComponent(tagName)}`,
+  };
 }
 
 export async function checkForUpdates(): Promise<UpdateInfo | null> {
