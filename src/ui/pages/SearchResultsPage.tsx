@@ -63,18 +63,14 @@ const SCOPES: Array<{
 
 const EMPTY_RESULTS: SearchResults = { artists: [], tracks: [], albums: [], playlists: [] };
 
-function buildFlatItems(results: SearchResults, songsFirst: boolean): SelectableItem[] {
-  const items: SelectableItem[] = [];
-  if (results.artists.length > 0 && !songsFirst) {
-    for (const artist of results.artists) items.push({ kind: "artist", artist });
-  }
-  for (const track of results.tracks) items.push({ kind: "track", track });
-  if (results.artists.length > 0 && songsFirst) {
-    for (const artist of results.artists) items.push({ kind: "artist", artist });
-  }
-  for (const album of results.albums) items.push({ kind: "album", album });
-  for (const playlist of results.playlists) items.push({ kind: "playlist", playlist });
-  return items;
+/** Every result in screen order: songs, then artists, albums and playlists. */
+function buildFlatItems(results: SearchResults): SelectableItem[] {
+  return [
+    ...results.tracks.map((track): SelectableItem => ({ kind: "track", track })),
+    ...results.artists.map((artist): SelectableItem => ({ kind: "artist", artist })),
+    ...results.albums.map((album): SelectableItem => ({ kind: "album", album })),
+    ...results.playlists.map((playlist): SelectableItem => ({ kind: "playlist", playlist })),
+  ];
 }
 
 /** Rectangular filter chip; the selected one inverts. */
@@ -290,14 +286,8 @@ export function SearchResultsPage({
     else void playerController.playTrackById(track.id, scopedResults.tracks, true);
   }, [onPlayTrack, playerController, scopedResults.tracks]);
 
-  /*
-   * Songs always come first on screen now (beside the top result), so keyboard order follows
-   * them. `songsFirst` still decides what the top result is.
-   */
-  const flatItems = useMemo(
-    () => buildFlatItems(scopedResults, true),
-    [scopedResults],
-  );
+  // `songsFirst` decides what the top result is; the songs list itself always comes first.
+  const flatItems = useMemo(() => buildFlatItems(scopedResults), [scopedResults]);
 
   const topResult = useMemo<TopResult | null>(() => {
     if (scope !== "all") return null;
@@ -316,87 +306,50 @@ export function SearchResultsPage({
     return null;
   }, [hasExactArtist, normalizedQuery, scope, scopedResults, songsFirst]);
 
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  /*
+   * The arrow keys walk the results in screen order and take focus with them, so Enter and
+   * Space go to the focused result like any other control. Enter used to be handled for the
+   * whole window as well, which acted on top of whatever had focus: Enter on an album card
+   * also played the first song.
+   */
+  const [selectedIndex, setSelectedIndex] = useState(-1);
   const [isKeyboardNav, setIsKeyboardNav] = useState(false);
 
   useEffect(() => {
-    setSelectedIndex(0);
+    setSelectedIndex(-1);
     setIsKeyboardNav(false);
-  }, [results]);
+  }, [flatItems]);
 
   const selectedIndexRef = useRef(selectedIndex);
   selectedIndexRef.current = selectedIndex;
-  const flatItemsRef = useRef(flatItems);
-  flatItemsRef.current = flatItems;
-  const hasResultsRef = useRef(hasResults);
-  hasResultsRef.current = hasResults;
-  const resultsRef = useRef(results);
-  resultsRef.current = results;
-
-  const onOpenArtistRef = useRef(onOpenArtist);
-  onOpenArtistRef.current = onOpenArtist;
-  const onOpenAlbumRef = useRef(onOpenAlbum);
-  onOpenAlbumRef.current = onOpenAlbum;
-  const onOpenPlaylistRef = useRef(onOpenPlaylist);
-  onOpenPlaylistRef.current = onOpenPlaylist;
-  const onPlayTrackRef = useRef(onPlayTrack);
-  onPlayTrackRef.current = onPlayTrack;
-  const playerControllerRef = useRef(playerController);
-  playerControllerRef.current = playerController;
+  const itemCountRef = useRef(0);
+  itemCountRef.current = isLoading ? 0 : flatItems.length;
 
   useEffect(() => {
-    if (isLoading || !hasResultsRef.current) return;
-
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || (event.key !== "ArrowDown" && event.key !== "ArrowUp")) return;
+      const count = itemCountRef.current;
+      if (count === 0) return;
       const target = event.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
-
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setIsKeyboardNav(true);
-        setSelectedIndex((prev) => Math.min(prev + 1, flatItemsRef.current.length - 1));
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setIsKeyboardNav(true);
-        setSelectedIndex((prev) => Math.max(prev - 1, 0));
-        return;
-      }
-      if (event.key === "Enter") {
-        const item = flatItemsRef.current[selectedIndexRef.current];
-        if (!item) return;
-        event.preventDefault();
-        switch (item.kind) {
-          case "artist":
-            onOpenArtistRef.current(item.artist);
-            break;
-          case "track": {
-            const track = item.track;
-            if (onPlayTrackRef.current) {
-              void onPlayTrackRef.current(track);
-            } else {
-              void playerControllerRef.current.playTrackById(
-                track.id,
-                resultsRef.current.tracks,
-                true,
-              );
-            }
-            break;
-          }
-          case "album":
-            onOpenAlbumRef.current(item.album);
-            break;
-          case "playlist":
-            onOpenPlaylistRef.current(item.playlist);
-            break;
-        }
-      }
+      // These use the arrows themselves.
+      if (target.closest("[role=menu], [role=listbox], [role=slider], [role=dialog], [role=alertdialog]")) return;
+      event.preventDefault();
+      const current = selectedIndexRef.current;
+      const next = event.key === "ArrowDown" ? Math.min(current + 1, count - 1) : Math.max(current - 1, 0);
+      selectedIndexRef.current = next;
+      setSelectedIndex(next);
+      setIsKeyboardNav(true);
+      const element = document.querySelector<HTMLElement>(`[data-selectable-index="${next}"]`);
+      const control = element?.matches("button, [role=button]")
+        ? element
+        : element?.querySelector<HTMLElement>("button, [role=button]");
+      control?.focus({ preventScroll: true });
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isLoading]);
+  }, []);
 
   useEffect(() => {
     if (!isKeyboardNav) return;

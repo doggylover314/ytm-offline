@@ -62,7 +62,10 @@ export const AlbumCard = memo(function AlbumCard({
     [],
   );
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Enter" || event.key === " ") handlersRef.current.onClick?.();
+    if (event.key !== "Enter" && event.key !== " ") return;
+    // Taken here, so Space does not also scroll the page and no page-wide handler acts on it.
+    event.preventDefault();
+    handlersRef.current.onClick?.();
   }, []);
 
   return (
