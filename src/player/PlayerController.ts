@@ -1592,13 +1592,15 @@ export class PlayerController {
   }
 
   /**
-   * Starts reporting a play, when the provider and the engine both allow it.
+   * Starts reporting a play to the account's history, when that setting is on.
    *
-   * Gated on native playback because the IFrame embed reports its own plays — pinging as well
-   * would count every track twice. Local files have no provider history to report to.
+   * On every engine. This used to skip the YouTube player on the theory that the embed reports
+   * its own plays, but the embed runs signed out (the Google session lives in the sign-in
+   * window, not here), so with that engine nothing ever reached the history. Local files have
+   * no provider history to report to.
    */
   private beginPlayReport(track: Track): void {
-    if (!this.audioEngine.usesNativeAudio() || track.source === "local") return;
+    if (track.source === "local") return;
     void this.dataSource.beginPlayReport?.(track);
   }
 
@@ -1610,9 +1612,7 @@ export class PlayerController {
   }
 
   private syncScrobbleTicker(): void {
-    const wanted = this.state.status === "playing"
-      && this.isTabActive
-      && this.audioEngine.usesNativeAudio();
+    const wanted = this.state.status === "playing" && this.isTabActive;
 
     if (wanted === (this.scrobbleTimerId !== null)) return;
 

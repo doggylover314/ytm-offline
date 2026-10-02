@@ -549,6 +549,16 @@ export class AudioEngine {
     return false;
   }
 
+  /*
+   * The song before played on the YouTube player after Rust was refused it. Switching back to
+   * Rust or the native player has to stop that player too: clearing the flag alone left it
+   * playing underneath the next song.
+   */
+  private endIframeFallback(): void {
+    if (this.iframeFallbackActive) this.player?.stopVideo();
+    this.iframeFallbackActive = false;
+  }
+
   stop(): void {
     this.loadRequestId += 1;
     if (playbackOwner === this) {
@@ -818,6 +828,7 @@ export class AudioEngine {
         this.rustStandbyTrackId = null;
         return false;
       }
+      this.endIframeFallback();
       this.rustStandbyTrackId = null;
       this.rustTrackId = videoId;
       this.rustDurationSec = this.rustStandbyDurationSec;
@@ -979,7 +990,7 @@ export class AudioEngine {
     durationSec: number,
   ): Promise<void> {
     const requestId = ++this.loadRequestId;
-    this.iframeFallbackActive = false;
+    this.endIframeFallback();
     routeRustEnded();
     /*
      * Both entry points come through here, and this one has to run before the media server is
@@ -1050,7 +1061,7 @@ export class AudioEngine {
     sourceUrl?: string,
   ): Promise<void> {
     const requestId = ++this.loadRequestId;
-    this.iframeFallbackActive = false;
+    this.endIframeFallback();
     // This is the path that publishes bodies to the media server, so a later switch back to the
     // Rust engine has something to release again.
     mediaServerReleased = false;
