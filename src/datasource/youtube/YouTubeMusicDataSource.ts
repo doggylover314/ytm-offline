@@ -45,6 +45,7 @@ import type {
 } from "../types";
 import { collectArtworkCandidates, getVideoArtworkFallback, selectArtworkUrl } from "./artwork";
 import {
+  isIncompleteLookup,
   LYRICS_SOURCES,
   type LyricsSource,
   pickBestLyrics,
@@ -143,6 +144,8 @@ type MusicItem = {
   end_icon_type?: string;
   fixed_columns?: MusicColumn[];
   flex_columns?: MusicColumn[];
+  /** Song and video rows, parsed from their "3:45" column. */
+  duration?: { text?: string; seconds?: number };
 };
 
 type ParsedMusicResponse = {
@@ -193,10 +196,6 @@ type LrcLibTrack = {
   albumName?: string;
   duration?: number;
   syncedLyrics?: string | null;
-};
-
-type BetterLyricsResponse = {
-  ttml?: string | null;
 };
 
 /* Rank used to live on the result as a `priority` number that nothing ever read — the winner
@@ -1125,7 +1124,18 @@ export class YouTubeMusicDataSource extends DataSource {
       viewCount: this.parseViewCount(viewCountText),
       viewCountText,
       isExplicit: this.isExplicitItem(item),
+      durationSec: this.getDurationSec(item),
     };
+  }
+
+  /*
+   * The row's own length. Without it every list showed blank durations and LRCLIB, which
+   * matches lyrics on the recording's length, was never asked: downloaded songs only ever got
+   * unsynced lyrics.
+   */
+  private getDurationSec(item: MusicItem): number | undefined {
+    const seconds = item.duration?.seconds;
+    return typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
   }
 
   /** Title+artist, normalized, so a song and its own music video land on the same key. */
@@ -4663,7 +4673,6 @@ export class YouTubeMusicDataSource extends DataSource {
 
     const runners: Record<string, () => Promise<Lyrics | null>> = {
       "lrclib-exact": () => this.fetchLrcLibExactLyrics(track),
-      betterlyrics: () => this.fetchBetterLyrics(track),
       "lrclib-search": () => this.fetchLrcLibSearchLyrics(track),
       "youtube-transcript": () => this.fetchYouTubeTranscriptLyrics(track),
       "youtube-music": () => this.fetchYouTubeMusicLyrics(track),
@@ -4707,7 +4716,12 @@ export class YouTubeMusicDataSource extends DataSource {
         trackId: track.id,
         attempts: orderedAttempts.map((attempt) => `${attempt.id}:${attempt.status}`).join(","),
       });
-      return { lines: [], timing: "none", attempts: orderedAttempts };
+      return {
+        lines: [],
+        timing: "none",
+        attempts: orderedAttempts,
+        incomplete: isIncompleteLookup(orderedAttempts, undefined, preferredId),
+      };
     }
 
     return {
@@ -4715,6 +4729,7 @@ export class YouTubeMusicDataSource extends DataSource {
       sourceId: winner.source.id,
       sourceLabel: winner.lyrics.sourceLabel || winner.source.label,
       attempts: orderedAttempts,
+      incomplete: isIncompleteLookup(orderedAttempts, winner.source.id, preferredId),
     };
   }
 
@@ -4793,7 +4808,14 @@ export class YouTubeMusicDataSource extends DataSource {
   private async fetchYouTubeTranscriptLyrics(track: Track): Promise<Lyrics | null> {
     const webClient = await this.getWebClient();
     const info = await webClient.getInfo(track.id);
-    const transcript = await info.getTranscript();
+    let transcript: Awaited<ReturnType<typeof info.getTranscript>>;
+    try {
+      transcript = await info.getTranscript();
+    } catch (error) {
+      // Most songs have no transcript at all: that is a miss, not a failure to look.
+      if (error instanceof Error && /transcript panel not found/i.test(error.message)) return null;
+      throw error;
+    }
     const segments = transcript.transcript.content?.body?.initial_segments ?? [];
     const timedLines = segments.flatMap((segment) => {
       const item = segment as unknown as {
@@ -4821,6 +4843,7 @@ export class YouTubeMusicDataSource extends DataSource {
     const durationSec = this.getRoundedDurationSec(track);
     if (!durationSec) return null;
 
+    let failure: unknown = null;
     for (const query of this.getLyricsQueries(track)) {
       const params = new URLSearchParams({
         track_name: query.title,
@@ -4833,13 +4856,16 @@ export class YouTubeMusicDataSource extends DataSource {
         const response = await tauriFetch(`https://lrclib.net/api/get?${params}`, {
           headers: this.getLyricsRequestHeaders(),
           timeoutMs: 2_500,
+          quiet: true,
         });
-        if (!response.ok) continue;
+        if (response.status === 404) continue;
+        if (!response.ok) throw new Error(`LRCLIB answered HTTP ${response.status}`);
 
         const match = await response.json() as LrcLibTrack;
         const result = this.toLrcLibLyrics(track, match, "LRCLIB");
         if (result) return result;
       } catch (error) {
+        failure = error;
         logInternalWarn("YouTubeMusicDataSource.getLyrics LRCLIB exact unavailable", {
           trackId: track.id,
           error: error instanceof Error ? error.message : String(error),
@@ -4847,6 +4873,9 @@ export class YouTubeMusicDataSource extends DataSource {
       }
     }
 
+    // "Busy" or unreachable is not "no lyrics": reporting it as a miss would let the song
+    // settle for worse lyrics as if LRCLIB had none.
+    if (failure) throw failure;
     return null;
   }
 
@@ -4854,6 +4883,7 @@ export class YouTubeMusicDataSource extends DataSource {
     const durationSec = track.durationSec;
     if (!durationSec || durationSec <= 0) return null;
 
+    let failure: unknown = null;
     for (const query of this.getLyricsQueries(track)) {
       try {
         const params = new URLSearchParams({
@@ -4865,8 +4895,9 @@ export class YouTubeMusicDataSource extends DataSource {
         const response = await tauriFetch(`https://lrclib.net/api/search?${params}`, {
           headers: this.getLyricsRequestHeaders(),
           timeoutMs: 4_500,
+          quiet: true,
         });
-        if (!response.ok) continue;
+        if (!response.ok) throw new Error(`LRCLIB answered HTTP ${response.status}`);
 
         const matches = await response.json() as LrcLibTrack[];
         const candidates = matches
@@ -4882,6 +4913,7 @@ export class YouTubeMusicDataSource extends DataSource {
           if (result) return result;
         }
       } catch (error) {
+        failure = error;
         logInternalWarn("YouTubeMusicDataSource.getLyrics LRCLIB search unavailable", {
           trackId: track.id,
           error: error instanceof Error ? error.message : String(error),
@@ -4889,50 +4921,7 @@ export class YouTubeMusicDataSource extends DataSource {
       }
     }
 
-    return null;
-  }
-
-  private async fetchBetterLyrics(track: Track): Promise<LyricsProviderResult | null> {
-    const durationSec = this.getRoundedDurationSec(track);
-
-    for (const query of this.getLyricsQueries(track)) {
-      const params = new URLSearchParams({
-        s: query.title,
-        a: query.artist,
-      });
-      if (durationSec) params.set("d", String(durationSec));
-      if (query.album) params.set("al", query.album);
-
-      try {
-        const response = await tauriFetch(`https://lyrics-api.boidu.dev/getLyrics?${params}`, {
-          headers: this.getLyricsRequestHeaders(),
-          timeoutMs: 3_500,
-        });
-        if (!response.ok) continue;
-
-        const body = await response.json() as BetterLyricsResponse;
-        if (!body.ttml) continue;
-
-        const lines = this.parseTtmlLyrics(body.ttml);
-        if (lines.length === 0) continue;
-
-        logInternalInfo("YouTubeMusicDataSource.getLyrics BetterLyrics success", {
-          trackId: track.id,
-          lineCount: lines.length,
-        });
-        return {
-          lines,
-          timing: "synced",
-          sourceLabel: "BetterLyrics",
-        };
-      } catch (error) {
-        logInternalWarn("YouTubeMusicDataSource.getLyrics BetterLyrics unavailable", {
-          trackId: track.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
+    if (failure) throw failure;
     return null;
   }
 
@@ -5052,68 +5041,6 @@ export class YouTubeMusicDataSource extends DataSource {
       ...line,
       endTimeSec: lines[index + 1]?.startTimeSec,
     }));
-  }
-
-  private parseTtmlLyrics(ttml: string): Lyrics["lines"] {
-    const parser = new DOMParser();
-    const document = parser.parseFromString(ttml, "application/xml");
-    if (document.querySelector("parsererror")) return [];
-
-    const lines = [...document.getElementsByTagName("p")].flatMap((node) => {
-      const startTimeSec = this.parseTtmlTime(node.getAttribute("begin") ?? node.getAttribute("start"));
-      if (startTimeSec === undefined) return [];
-
-      const endTimeSec = this.parseTtmlTime(node.getAttribute("end"));
-      const text = (node.textContent ?? "")
-        .replace(/\s+/g, " ")
-        .trim();
-      if (!text) return [];
-
-      return [{
-        text,
-        startTimeSec,
-        endTimeSec,
-      }];
-    });
-
-    lines.sort((left, right) => (left.startTimeSec ?? 0) - (right.startTimeSec ?? 0));
-    return lines.map((line, index) => ({
-      ...line,
-      endTimeSec: line.endTimeSec ?? lines[index + 1]?.startTimeSec,
-    }));
-  }
-
-  private parseTtmlTime(value: string | null): number | undefined {
-    if (!value) return undefined;
-
-    const clockTime = value.match(/^(\d+):(\d{2}):(\d{2})(?:[.:](\d{1,3}))?$/);
-    if (clockTime) {
-      const hours = Number(clockTime[1]);
-      const minutes = Number(clockTime[2]);
-      const seconds = Number(clockTime[3]);
-      const fraction = clockTime[4] ?? "0";
-      return hours * 3600 + minutes * 60 + seconds + Number(fraction.padEnd(3, "0").slice(0, 3)) / 1000;
-    }
-
-    const minuteTime = value.match(/^(\d+):(\d{2})(?:[.:](\d{1,3}))?$/);
-    if (minuteTime) {
-      const minutes = Number(minuteTime[1]);
-      const seconds = Number(minuteTime[2]);
-      const fraction = minuteTime[3] ?? "0";
-      return minutes * 60 + seconds + Number(fraction.padEnd(3, "0").slice(0, 3)) / 1000;
-    }
-
-    const offsetTime = value.match(/^([\d.]+)(h|m|s|ms)$/);
-    if (offsetTime) {
-      const amount = Number(offsetTime[1]);
-      if (!Number.isFinite(amount)) return undefined;
-      if (offsetTime[2] === "h") return amount * 3600;
-      if (offsetTime[2] === "m") return amount * 60;
-      if (offsetTime[2] === "s") return amount;
-      return amount / 1000;
-    }
-
-    return undefined;
   }
 
   private async refreshTrack(trackId: string, cacheKey: string): Promise<Track> {

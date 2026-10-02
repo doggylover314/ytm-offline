@@ -58,6 +58,11 @@ export interface Lyrics {
   sourceId?: string;
   /** What every source did on this lookup, in preference order. */
   attempts?: LyricsSourceAttempt[];
+  /**
+   * A source that would have ranked above these failed to answer (busy, timed out), so asking
+   * again later may find better lyrics.
+   */
+  incomplete?: boolean;
 }
 
 export interface Album {

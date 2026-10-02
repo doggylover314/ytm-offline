@@ -51,6 +51,10 @@ const FAILED_RETRY_AFTER_MS = 30 * 60_000;
 /** While downloads are paused for storage, how often to check whether the folder is back. */
 const STORAGE_RECHECK_MS = 60_000;
 const LYRICS_TIMEOUT_MS = 20_000;
+/** How long before a song still without synced lyrics is looked up again. */
+const LYRICS_RECHECK_MS = 30 * 24 * 60 * 60_000;
+/** Pause between background lyrics lookups. */
+const LYRICS_LOOKUP_GAP_MS = 1_500;
 const MAX_ARTWORK_BYTES = 12 * 1024 * 1024;
 
 export type OfflineStatus = "absent" | "queued" | "downloading" | "ready" | "failed";
@@ -76,6 +80,8 @@ export interface OfflineEntry {
   remoteArtworkUrl?: string;
   /** Artwork and lyrics are still to be fetched. */
   metadataPending?: boolean;
+  /** When lyrics were last looked up. Songs without synced lyrics are looked up again later. */
+  lyricsCheckedAt?: number;
 }
 
 /** Who wants a song downloaded. It stays while anyone does. */
@@ -519,8 +525,9 @@ async function hydrate(): Promise<void> {
   saveQueue();
   for (const apply of afterHydration.splice(0)) apply();
 
+  const now = Date.now();
   for (const [id, entry] of Object.entries(entries)) {
-    if (entry.metadataPending) queueMetadata(id);
+    if (entry.metadataPending || needsLyricsCheck(entry, now)) queueMetadata(id);
   }
   subscribeConnectivity(() => {
     if (isOnline()) void pump();
@@ -659,7 +666,12 @@ function queueTracks(tracks: readonly Track[], playlistId: string | undefined, r
       if (!track?.id || track.source === "local") continue;
       const entry = nextEntries[track.id];
       if (entry) {
-        const merged = entryWithOwner(entry, playlistId);
+        let merged = entryWithOwner(entry, playlistId);
+        // Songs downloaded before durations were read have none, and LRCLIB needs one.
+        if (!merged.track.durationSec && track.durationSec) {
+          merged = { ...merged, track: { ...merged.track, durationSec: track.durationSec } };
+          if (needsLyricsCheck(merged, now)) queueMetadata(track.id);
+        }
         if (merged !== entry) nextEntries = { ...nextEntries, [track.id]: merged };
         continue;
       }
@@ -1037,12 +1049,13 @@ async function runMetadata(): Promise<void> {
       const [trackId] = metadataQueue;
       metadataQueue.delete(trackId);
       const entry = entries[trackId];
-      if (!entry?.metadataPending) continue;
+      if (!entry || !(entry.metadataPending || needsLyricsCheck(entry, Date.now()))) continue;
 
       const [artwork, lyrics] = await Promise.allSettled([saveArtwork(entry), fetchLyrics(entry)]);
       const current = entries[trackId];
       if (!current) continue;
       const artworkSaved = artwork.status === "fulfilled" && artwork.value;
+      const looked = lyrics.status === "fulfilled" ? lyrics.value : null;
       setEntries({
         ...entries,
         [trackId]: {
@@ -1050,10 +1063,14 @@ async function runMetadata(): Promise<void> {
           track: artworkSaved
             ? { ...current.track, artworkUrl: `${OFFLINE_ARTWORK_PREFIX}${trackId}` }
             : current.track,
-          lyrics: lyrics.status === "fulfilled" && lyrics.value ? lyrics.value : current.lyrics,
+          lyrics: looked && lyricsRank(looked.lyrics) > lyricsRank(current.lyrics) ? looked.lyrics : current.lyrics,
+          // A lookup a source failed to answer is tried again on the next launch.
+          lyricsCheckedAt: looked && !looked.lyrics.incomplete ? Date.now() : current.lyricsCheckedAt,
           metadataPending: false,
         },
       });
+      // LRCLIB turns bursts away as overloaded; a whole playlist's worth goes at a gentler pace.
+      if (looked) await new Promise((resolve) => window.setTimeout(resolve, LYRICS_LOOKUP_GAP_MS));
     }
   } finally {
     metadataRunning = false;
@@ -1076,19 +1093,46 @@ async function saveArtwork(entry: OfflineEntry): Promise<boolean> {
   return true;
 }
 
-async function fetchLyrics(entry: OfflineEntry): Promise<Lyrics | undefined> {
-  if (entry.lyrics || !resolveLyrics) return entry.lyrics;
+/** How lyrics rank for keeping: synced lines, then plain lines, then nothing. */
+function lyricsRank(lyrics: Lyrics | undefined): number {
+  if (!Array.isArray(lyrics?.lines) || lyrics.lines.length === 0) return 0;
+  return lyrics.timing === "synced" ? 2 : 1;
+}
+
+/*
+ * A song without synced lyrics is looked up again now and then: the usual reason is that
+ * nobody had contributed them yet. It waits for a duration, which the synced sources match on.
+ */
+export function needsLyricsCheck(entry: OfflineEntry, now: number): boolean {
+  if (lyricsRank(entry.lyrics) === 2 || !entry.track.durationSec) return false;
+  return !entry.lyricsCheckedAt || now - entry.lyricsCheckedAt > LYRICS_RECHECK_MS;
+}
+
+/** Looks the lyrics up. Null when the lookup did not finish, so it is tried again. */
+async function fetchLyrics(entry: OfflineEntry): Promise<{ lyrics: Lyrics } | null> {
+  if (!resolveLyrics || lyricsRank(entry.lyrics) === 2) return null;
   let timer: number | undefined;
   try {
-    return await Promise.race([
+    const lyrics = await Promise.race([
       resolveLyrics(entry.track),
       new Promise<undefined>((resolve) => {
         timer = window.setTimeout(() => resolve(undefined), LYRICS_TIMEOUT_MS);
       }),
     ]);
+    return lyrics ? { lyrics } : null;
   } finally {
     window.clearTimeout(timer);
   }
+}
+
+/**
+ * Keeps better lyrics found while the song was open, so the downloaded copy has them offline
+ * too. Ignored unless they beat what is stored.
+ */
+export function improveOfflineLyrics(trackId: string, lyrics: Lyrics): void {
+  const entry = entries[trackId];
+  if (!entry || lyricsRank(lyrics) <= lyricsRank(entry.lyrics)) return;
+  setEntries({ ...entries, [trackId]: { ...entry, lyrics, lyricsCheckedAt: Date.now() } });
 }
 
 /* ── Download folder ─────────────────────────────────────────────────────────────────────── */

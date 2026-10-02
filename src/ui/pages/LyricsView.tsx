@@ -10,12 +10,13 @@ import {
 import { useReduceMotion } from "../settings/renderEffects";
 import { cn } from "@/lib/utils";
 import { CloseIcon, FullScreenIcon, LyricsIcon, QuitFullScreenIcon, RefreshIcon } from "@/ui/icons";
-import type { Lyrics, LyricsSourceAttempt, LyricsSourceStatus } from "../../datasource/types";
+import type { Lyrics, LyricsSourceAttempt, LyricsSourceStatus, Track } from "../../datasource/types";
 import { LYRICS_SOURCES } from "../../datasource/youtube/lyricsSources";
 import { FloatingPanel } from "../components/FloatingPanel";
 import { logInternalWarn } from "../../internal/logging";
 import { playerController, shallowEqual, usePlayerSelector } from "../../player/playerStore";
-import { getOfflineLyrics } from "../../player/offlineStore";
+import { getOfflineLyrics, improveOfflineLyrics } from "../../player/offlineStore";
+import { isOnline as isOnlineNow, useIsOnline } from "../../internal/connectivity";
 import { playerUIStore, usePlayerUIState } from "../stores/playerUIStore";
 import { ArtistLinks } from "../components/ArtistLinks";
 import { TrackArtwork } from "../components/TrackArtwork";
@@ -63,6 +64,24 @@ interface LyricsViewProps {
   onClose: () => void;
 }
 
+
+/**
+ * A downloaded song's stored lyrics when they are the best there is: synced, or all there is
+ * offline. Otherwise the sources are asked, and anything better is kept with the download.
+ */
+async function loadLyrics(track: Track): Promise<Lyrics | null> {
+  const stored = getOfflineLyrics(track.id);
+  if (stored && (isSyncedLyrics(stored) || !isOnlineNow())) return stored;
+  try {
+    const live = await playerController.getLyrics(track);
+    if (!live?.lines.length) return stored ?? live;
+    improveOfflineLyrics(track.id, live);
+    return stored?.lines.length && !isSyncedLyrics(live) ? stored : live;
+  } catch (error) {
+    if (stored) return stored;
+    throw error;
+  }
+}
 export function LyricsView({ onClose }: LyricsViewProps) {
   const playerState = usePlayerSelector(
     (player) => ({ currentTrack: player.currentTrack, status: player.status }),
@@ -84,7 +103,7 @@ export function LyricsView({ onClose }: LyricsViewProps) {
   const [activeIndex, setActiveIndex] = useState(-1);
   const [isFollowPaused, setIsFollowPaused] = useState(false);
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
-  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const isOnline = useIsOnline();
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<Array<HTMLElement | null>>([]);
@@ -109,16 +128,6 @@ export function LyricsView({ onClose }: LyricsViewProps) {
   }, [lyrics]);
 
   useEffect(() => {
-    const update = () => setIsOnline(navigator.onLine);
-    window.addEventListener("online", update);
-    window.addEventListener("offline", update);
-    return () => {
-      window.removeEventListener("online", update);
-      window.removeEventListener("offline", update);
-    };
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
     setLyrics(null);
     setFailed(false);
@@ -128,7 +137,7 @@ export function LyricsView({ onClose }: LyricsViewProps) {
     if (!track) return;
 
     setIsLoading(true);
-    void Promise.resolve(getOfflineLyrics(track.id) ?? playerController.getLyrics(track))
+    void loadLyrics(track)
       .then((result) => {
         if (!cancelled) setLyrics(result);
       })

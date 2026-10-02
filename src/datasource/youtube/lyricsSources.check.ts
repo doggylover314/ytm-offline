@@ -21,6 +21,7 @@ function equal(actual: unknown, expected: unknown, message: string): void {
 const {
   LYRICS_SOURCES,
   pickBestLyrics,
+  isIncompleteLookup,
   planLyricsWaves,
   rankOfSource,
   skippedAttempt,
@@ -39,7 +40,7 @@ const synced = (count: number) => ({
   timing: "synced" as const,
 });
 
-equal(LYRICS_SOURCES.length, 5, "every source is in the table");
+equal(LYRICS_SOURCES.length, 4, "every source is in the table");
 check(
   rankOfSource("lrclib-exact") < rankOfSource("lrclib-search"),
   "a duration-exact match outranks a text search of the same corpus",
@@ -60,7 +61,7 @@ check(
 // The whole point: passed in fastest-first, the table still picks the better source.
 const raced = [
   { source: byId("lrclib-search"), lyrics: synced(20) },
-  { source: byId("betterlyrics"), lyrics: synced(30) },
+  { source: byId("youtube-transcript"), lyrics: synced(30) },
   { source: byId("lrclib-exact"), lyrics: synced(25) },
 ];
 equal(pickBestLyrics(raced)?.source.id, "lrclib-exact", "rank wins over arrival order");
@@ -68,18 +69,18 @@ equal(pickBestLyrics(raced)?.source.id, "lrclib-exact", "rank wins over arrival 
 equal(
   pickBestLyrics([
     { source: byId("lrclib-exact"), lyrics: null },
-    { source: byId("betterlyrics"), lyrics: synced(12) },
+    { source: byId("lrclib-search"), lyrics: synced(12) },
   ])?.source.id,
-  "betterlyrics",
+  "lrclib-search",
   "a miss falls through to the next source down",
 );
 
 equal(
   pickBestLyrics([
     { source: byId("lrclib-exact"), lyrics: { lines: [], timing: "synced" } },
-    { source: byId("betterlyrics"), lyrics: synced(4) },
+    { source: byId("lrclib-search"), lyrics: synced(4) },
   ])?.source.id,
-  "betterlyrics",
+  "lrclib-search",
   "an empty line list is a miss, not a hit",
 );
 
@@ -96,7 +97,7 @@ equal(skippedAttempt(byId("youtube-music")).durationMs, 0, "and cost no time");
 const shuffled = sortAttempts([
   skippedAttempt(byId("youtube-music")),
   skippedAttempt(byId("lrclib-exact")),
-  skippedAttempt(byId("betterlyrics")),
+  skippedAttempt(byId("lrclib-search")),
 ]);
 equal(shuffled[0].id, "lrclib-exact", "attempts are listed in priority order, whatever order they finished in");
 equal(shuffled[2].id, "youtube-music", "down to the last resort");
@@ -139,7 +140,7 @@ equal(
 
 const defaultWaves = planLyricsWaves();
 equal(defaultWaves.length, 2, "by default the expensive sources are held back to a second wave");
-equal(defaultWaves[0].length, 3, "three cheap sources race first");
+equal(defaultWaves[0].length, 2, "the two cheap sources race first");
 check(
   defaultWaves[1].every((source) => source.wave === 2),
   "and only wave two sources are held back",
@@ -148,7 +149,7 @@ check(
 const promotedWaves = planLyricsWaves("youtube-music");
 check(
   promotedWaves[0].some((source) => source.id === "youtube-music"),
-  "a preferred wave-two source joins the first round rather than waiting behind four hosts",
+  "a preferred wave-two source joins the first round rather than waiting behind the others",
 );
 check(
   promotedWaves[0].every((source) => source.id !== "youtube-transcript"),
@@ -161,7 +162,7 @@ equal(
 );
 equal(
   planLyricsWaves("lrclib-exact")[0].length,
-  3,
+  2,
   "preferring a source already in wave one does not duplicate it",
 );
 
@@ -182,7 +183,7 @@ equal(
   "a track with a duration can be matched",
 );
 equal(
-  unmetPrecondition(byId("betterlyrics"), {}),
+  unmetPrecondition(byId("youtube-music"), {}),
   null,
   "sources that do not match on length are unaffected",
 );
@@ -199,5 +200,26 @@ equal(
   "Needs a track duration to match on",
   "and the reason reaches the status list instead of a bare 'No match'",
 );
+
+
+/* Incomplete lookups: worth asking again only when a better source failed to answer. */
+
+const attempt = (id: string, status: "hit" | "miss" | "error" | "timeout") => ({ ...skippedAttempt(byId(id)), status });
+check(
+  isIncompleteLookup([attempt("lrclib-exact", "error"), attempt("youtube-music", "hit")], "youtube-music"),
+  "LRCLIB busy while plain words won: ask again later",
+);
+check(
+  !isIncompleteLookup(
+    [attempt("lrclib-exact", "miss"), attempt("lrclib-search", "miss"), attempt("youtube-music", "hit")],
+    "youtube-music",
+  ),
+  "every better source said no: settled",
+);
+check(
+  !isIncompleteLookup([attempt("lrclib-exact", "hit"), attempt("youtube-transcript", "error")], "lrclib-exact"),
+  "a failure below the winner changes nothing",
+);
+check(isIncompleteLookup([attempt("lrclib-search", "timeout")], undefined), "nothing found while a source timed out");
 
 console.log("lyricsSources self-check passed");

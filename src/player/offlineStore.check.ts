@@ -11,6 +11,7 @@ export {};
 import {
   collectionDownloadState,
   MAX_ATTEMPTS,
+  needsLyricsCheck,
   planRetry,
   reconcileManifest,
   shouldRetryOnSync,
@@ -190,5 +191,26 @@ equal(
   { kind: "done", total: 3 },
   "only every song downloaded is done",
 );
+
+/* Lyrics re-checks: only songs without synced lyrics, only with a duration, not too often. */
+
+const DAY = 24 * 60 * 60_000;
+const LATER = 100 * DAY;
+const withLyrics = (timing: "synced" | "none", lines: number, extra: Partial<OfflineEntry> = {}): OfflineEntry => ({
+  ...entry("l", 1),
+  track: { ...entry("l", 1).track, durationSec: 200 },
+  lyrics: { timing, lines: Array.from({ length: lines }, (_, index) => ({ text: `line ${index}`, startTimeSec: index })) },
+  ...extra,
+});
+equal(needsLyricsCheck(withLyrics("synced", 3), LATER), false, "synced lyrics are kept for good");
+equal(needsLyricsCheck(withLyrics("none", 3), LATER), true, "plain lyrics are looked up again");
+equal(needsLyricsCheck(withLyrics("none", 0), LATER), true, "and so is a lookup that found nothing");
+equal(
+  needsLyricsCheck({ ...withLyrics("none", 3), track: entry("l", 1).track }, LATER),
+  false,
+  "not without a duration, which the synced sources match on",
+);
+equal(needsLyricsCheck(withLyrics("none", 3, { lyricsCheckedAt: LATER - DAY }), LATER), false, "not again the next day");
+equal(needsLyricsCheck(withLyrics("none", 3, { lyricsCheckedAt: LATER - 31 * DAY }), LATER), true, "but after a month");
 
 console.log("offlineStore.check passed");

@@ -41,13 +41,6 @@ export const LYRICS_SOURCES: LyricsSource[] = [
     note: "Line-synced, matched on title, artist and exact duration — the same recording.",
   },
   {
-    id: "betterlyrics",
-    label: "BetterLyrics",
-    timeoutMs: 3_500,
-    wave: 1,
-    note: "Line-synced TTML with explicit end times, community curated.",
-  },
-  {
     id: "lrclib-search",
     label: "LRCLIB search",
     timeoutMs: 4_500,
@@ -70,6 +63,21 @@ export const LYRICS_SOURCES: LyricsSource[] = [
     note: "The official words for this exact video, so never the wrong song — but carries no timings at all.",
   },
 ];
+
+/**
+ * Whether a source that ranks above the winner failed to answer, rather than answering that it
+ * had nothing. Such a lookup is worth repeating; one where every better source said "no" is not.
+ */
+export function isIncompleteLookup(
+  attempts: readonly LyricsSourceAttempt[],
+  winnerId: string | undefined,
+  preferredId?: string,
+): boolean {
+  const winnerRank = winnerId ? rankOfSource(winnerId, preferredId) : Number.POSITIVE_INFINITY;
+  return attempts.some((attempt) =>
+    (attempt.status === "error" || attempt.status === "timeout")
+    && rankOfSource(attempt.id, preferredId) < winnerRank);
+}
 
 /**
  * Position in the table, with the listener's preferred source promoted ahead of everything.

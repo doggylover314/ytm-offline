@@ -67,7 +67,10 @@ export function setAuthConfirmedHandler(handler: ((at: number) => void) | null):
 
 type TauriFetchInit = RequestInit & {
   timeoutMs?: number;
-  /** Failing is an expected answer (a connectivity probe), so it is not logged as an error. */
+  /**
+   * Failing is an expected answer (a connectivity probe, a lyrics lookup that finds nothing),
+   * so failures are left to the caller to report rather than logged here as errors.
+   */
   quiet?: boolean;
 };
 
@@ -312,7 +315,7 @@ export async function tauriFetch(input: RequestInfo | URL, init?: TauriFetchInit
     }
 
     const bodyBytes = fromBase64(proxyResponse.body_base64);
-    if (proxyResponse.status >= 400) {
+    if (proxyResponse.status >= 400 && !init?.quiet) {
       logInternalError("tauriFetch.http error", new Error(`HTTP ${proxyResponse.status}`), {
         method,
         url,
