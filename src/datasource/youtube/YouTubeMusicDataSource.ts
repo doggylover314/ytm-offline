@@ -532,10 +532,19 @@ export class YouTubeMusicDataSource extends DataSource {
     return client;
   }
 
+  /*
+   * The clients below are created once and shared, but a failed creation is forgotten so the
+   * next request tries again. Cached as it was, one failure (starting with no connection, say)
+   * left search and browse failing until the app was restarted.
+   */
   private getMusicClient(): Promise<Innertube> {
     if (!this.musicClientPromise) {
       logInternalInfo("YouTubeMusicDataSource.getMusicClient creating client");
-      this.musicClientPromise = this.createMusicClient(true);
+      const created = this.createMusicClient(true);
+      this.musicClientPromise = created;
+      created.catch(() => {
+        if (this.musicClientPromise === created) this.musicClientPromise = null;
+      });
     }
 
     return this.musicClientPromise;
@@ -546,9 +555,13 @@ export class YouTubeMusicDataSource extends DataSource {
       logInternalInfo("YouTubeMusicDataSource.getWebClient creating client");
       // No player needed: this client only enumerates accounts and resolves like endpoints,
       // neither of which touches stream URLs, and retrieving it downloads the player script.
-      this.webClientPromise = Innertube.create({
+      const created = Innertube.create({
         ...this.getSessionOptions(false),
         client_type: ClientType.WEB,
+      });
+      this.webClientPromise = created;
+      created.catch(() => {
+        if (this.webClientPromise === created) this.webClientPromise = null;
       });
     }
 
@@ -578,7 +591,7 @@ export class YouTubeMusicDataSource extends DataSource {
   private getDownloadClient(): Promise<Innertube> {
     if (!this.downloadClientPromise) {
       logInternalInfo("YouTubeMusicDataSource.getDownloadClient creating client");
-      this.downloadClientPromise = (async () => {
+      const created = (async () => {
         const bootstrap = await Innertube.create({
           fetch: tauriFetch,
           retrieve_player: false,
@@ -595,6 +608,10 @@ export class YouTubeMusicDataSource extends DataSource {
           client_type: ClientType.MUSIC,
         });
       })();
+      this.downloadClientPromise = created;
+      created.catch(() => {
+        if (this.downloadClientPromise === created) this.downloadClientPromise = null;
+      });
     }
 
     return this.downloadClientPromise;

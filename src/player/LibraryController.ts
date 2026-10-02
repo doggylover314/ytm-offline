@@ -81,7 +81,6 @@ type Listener = () => void;
  * well past twenty seconds. This only bounds the *initial* fetch — a cached library returns at
  * once and refreshes in the background, where nothing is waiting on it.
  */
-const LIBRARY_REFRESH_TIMEOUT_MS = 120_000;
 const SIGN_IN_REFRESH_RETRY_DELAYS_MS = [0, 1_500, 5_000];
 /**
  * Silent recovery opens a hidden webview, so it is rate-limited rather than reflexive. Long
@@ -89,17 +88,6 @@ const SIGN_IN_REFRESH_RETRY_DELAYS_MS = [0, 1_500, 5_000];
  * it, short enough that a transient rejection heals itself within one sitting.
  */
 const SESSION_RECOVERY_COOLDOWN_MS = 5 * 60_000;
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
-  let timeoutId: number | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutId = window.setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
-
-  return Promise.race([promise, timeout]).finally(() => {
-    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
-  });
-}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -506,19 +494,21 @@ export class LibraryController {
     if (!this.dataSource.getLibrary) return;
     this.setState({ status: "loading", authPrompt: null, error: null });
     try {
-      const library = await withTimeout(
-        this.dataSource.getLibrary(
-          (updatedLibrary) => {
-            this.setState({ status: "ready", library: updatedLibrary, authPrompt: null, error: null });
-          },
-          (error) => {
-            // A background refresh, so there is no caller to throw to — this is the only way an
-            // expired session behind a cache hit ever becomes visible.
-            if (error instanceof AuthExpiredError) this.markSessionExpired();
-          },
-        ),
-        LIBRARY_REFRESH_TIMEOUT_MS,
-        "YouTube Music library sync timed out.",
+      /*
+       * No overall time limit. It was two minutes, and a large library's first sync can take
+       * longer: its "timed out" then read as a lost connection and put the app offline, and the
+       * sync's result was thrown away when it did arrive. Every request has its own connect and
+       * stall timeouts, so a dead connection still fails, as a network error, on its own.
+       */
+      const library = await this.dataSource.getLibrary(
+        (updatedLibrary) => {
+          this.setState({ status: "ready", library: updatedLibrary, authPrompt: null, error: null });
+        },
+        (error) => {
+          // A background refresh, so there is no caller to throw to — this is the only way an
+          // expired session behind a cache hit ever becomes visible.
+          if (error instanceof AuthExpiredError) this.markSessionExpired();
+        },
       );
       this.applyLibrary(library);
     } catch (error) {
