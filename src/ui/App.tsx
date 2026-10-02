@@ -1085,7 +1085,8 @@ export default function App() {
 
     // ponytail: a playlist link has no title until its page loads, and the tracks do not
     // carry one. Fetch the playlist header here if the placeholder ever becomes a complaint.
-    const saved = libraryController.getState().library?.playlists.find(
+    const library = libraryController.getState().library;
+    const saved = [...(library ? [library.likedSongsPlaylist] : []), ...(library?.playlists ?? [])].find(
       (item) => item.id.replace(/^VL/, "") === resolved.id.replace(/^VL/, ""),
     );
     handleNavigatePlaylist(saved ?? {

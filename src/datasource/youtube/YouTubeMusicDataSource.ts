@@ -4011,13 +4011,18 @@ export class YouTubeMusicDataSource extends DataSource {
     let tracks: Track[] = [];
 
     if (pageKey) {
+      /*
+       * A page that cannot be loaded is an error, never an empty last page. Ending the list
+       * there would look complete, and a synced playlist would delete every downloaded song
+       * after the break.
+       */
       const session = this.playlistPageSessions.get(pageKey);
       if (!session || session.playlistId !== playlist.id) {
         logInternalWarn("YouTubeMusicDataSource.getPlaylistTrackPage missing session", {
           playlistId: playlist.id,
           pageKey,
         });
-        return { tracks: [], hasMore: false };
+        throw new Error("The rest of this playlist expired before it loaded. Open it again.");
       }
 
       if (!session.playlistPage.has_continuation) {
@@ -4032,12 +4037,12 @@ export class YouTubeMusicDataSource extends DataSource {
         try {
           page = await page.getContinuation();
         } catch (error) {
-          this.playlistPageSessions.delete(pageKey);
+          // The session stays, so trying again resumes from this page.
           logInternalWarn("YouTubeMusicDataSource.getPlaylistTrackPage continuation failed", {
             playlistId: playlist.id,
             error: error instanceof Error ? error.message : String(error),
           });
-          return { tracks: [], hasMore: false };
+          throw error;
         }
         tracks = this.collectParsedPlaylistPageTracks(page, seenTrackIds);
       }
@@ -4084,7 +4089,12 @@ export class YouTubeMusicDataSource extends DataSource {
       return { tracks, hasMore: false };
     }
 
-    sessionKey ??= this.createPlaylistPageKey(playlist.id);
+    /*
+     * A new key for every page. The old one is spent, and a caller handed the same key twice
+     * can tell that the paging has stopped moving rather than mistaking it for a loop.
+     */
+    if (sessionKey) this.playlistPageSessions.delete(sessionKey);
+    sessionKey = this.createPlaylistPageKey(playlist.id);
     this.playlistPageSessions.set(sessionKey, {
       playlistId: playlist.id,
       playlistPage: page,

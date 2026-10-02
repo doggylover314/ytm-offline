@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { SpinnerSteps } from "@/components/motion/loader";
-import { ArrowDownIcon, ArrowUpIcon, CloseIcon, FolderAddIcon, MoreIcon, SearchIcon } from "@/ui/icons";
+import { ArrowDownIcon, ArrowUpIcon, CloseIcon, FolderAddIcon, HeartActiveIcon, MoreIcon, SearchIcon } from "@/ui/icons";
 import type { Playlist, Track } from "../../datasource/types";
 import type { LibraryController } from "../../player/LibraryController";
 import type { PlayerControllerActions } from "../../player/playerStore";
@@ -31,7 +31,7 @@ import {
 import { useIsOnline } from "../../internal/connectivity";
 import { usePlaylistContextMenu } from "../components/PlaylistContextMenu";
 import { formatCollectionMeta, HEADER_SECONDARY_BUTTON, MediaHeader } from "../components/MediaHeader";
-import { isLikedSongsId, likedSongsCover } from "../likedSongsArtwork";
+import { isLikedSongsId } from "../likedSongsArtwork";
 import { TrackListSkeleton } from "../components/Skeleton";
 import { TrackListHeader, TrackRow } from "../components/TrackRow";
 import { useNowPlaying } from "../hooks/useNowPlaying";
@@ -754,11 +754,9 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
           artworkUrl={playlist.artworkUrl}
           artworkVariant="playlist"
           artworkSlot={isLikedSongs ? (
-            <img
-              className="size-[200px] shrink-0 rounded-lg object-cover"
-              src={likedSongsCover}
-              alt=""
-            />
+            <span className="grid size-[200px] shrink-0 place-items-center rounded-lg bg-muted text-foreground">
+              <HeartActiveIcon size={64} aria-hidden="true" />
+            </span>
           ) : undefined}
           {...(isLocalPlaylistView
             ? {

@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Playlist, Track, TrackPage } from "../datasource/types";
 import { getAppSetting, setAppSetting } from "../internal/appSettings";
-import playlistPlaceholder from "../../assets/img/playlistplaceholder.svg";
 
 const STORAGE_KEY = "ytc-local-playlists-v1";
 const LOCAL_PLAYLIST_TRACKS_STORAGE_KEY = "ytc-local-playlist-tracks-v1";
@@ -410,18 +409,12 @@ export function localPlaylistToPlaylist(playlist: LocalPlaylist): Playlist {
     kind: "local",
     isEditable: true,
     localPaths: playlist.paths,
-    /*
-     * A local playlist has no cover to fetch, so every surface used to fall back to its own
-     * glyph. The bundled placeholder gives them one identity instead of three, and a picked
-     * image replaces it through the same `TrackArtwork` path as embedded cover art.
-     */
-    artworkUrl: playlist.artworkPath
-      ? `${LOCAL_IMAGE_PREFIX}${playlist.artworkPath}`
-      : playlistPlaceholder,
+    // Without a picked image it gets the same playlist tile as any playlist with no cover.
+    artworkUrl: playlist.artworkPath ? `${LOCAL_IMAGE_PREFIX}${playlist.artworkPath}` : undefined,
   };
 }
 
-/** Sets or clears the cover for a local playlist. `null` restores the placeholder. */
+/** Sets or clears the cover for a local playlist. `null` goes back to the plain playlist tile. */
 export function setLocalPlaylistArtwork(playlistId: string, artworkPath: string | null): void {
   const playlists = readLocalPlaylists();
   const next = playlists.map((playlist) =>

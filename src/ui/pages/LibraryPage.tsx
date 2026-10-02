@@ -193,13 +193,16 @@ export function LibraryPage({
 
   const playlists = useMemo(() => {
     const all = [...(library?.playlists ?? []), ...localPlaylists];
-    return sortItems(
+    const sorted = sortItems(
       all.filter((playlist) => matches(normalizedQuery, playlist.title, playlist.owner)),
       activeSort,
       (playlist) => playlist.title,
       (playlist) => playlist.owner,
     );
-  }, [activeSort, library?.playlists, localPlaylists, normalizedQuery]);
+    // Liked Songs leads the list whatever the sort, as it does on YouTube Music.
+    const liked = library?.likedSongsPlaylist;
+    return liked && matches(normalizedQuery, liked.title, liked.owner) ? [liked, ...sorted] : sorted;
+  }, [activeSort, library?.likedSongsPlaylist, library?.playlists, localPlaylists, normalizedQuery]);
 
   /*
    * A display filter, not a second data source: `playlists` above stays the full sorted list,
