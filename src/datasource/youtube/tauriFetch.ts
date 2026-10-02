@@ -281,6 +281,7 @@ export async function tauriFetch(input: RequestInfo | URL, init?: TauriFetchInit
         headers,
         body_base64,
         timeout_ms: init?.timeoutMs,
+        quiet: init?.quiet ?? false,
       },
     });
 

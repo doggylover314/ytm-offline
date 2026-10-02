@@ -951,7 +951,7 @@ async function runJob(job: DownloadJob): Promise<void> {
       trackId,
       cookie: stream.cookie,
     });
-    onDownloaded(trackId, result.byteLength, result.mimeType || stream.mimeType);
+    await onDownloaded(trackId, result.byteLength, result.mimeType || stream.mimeType);
   } catch (error) {
     onFailed(trackId, error);
   } finally {
@@ -961,13 +961,13 @@ async function runJob(job: DownloadJob): Promise<void> {
   }
 }
 
-function onDownloaded(trackId: string, byteLength: number, mimeType: string): void {
+async function onDownloaded(trackId: string, byteLength: number, mimeType: string): Promise<void> {
   const job = jobs.get(trackId);
   jobs.delete(trackId);
-  saveQueue();
 
   // Cancelled, or every owner let go, while the last bytes were arriving.
   if (!job || !hasOwners(job.owners)) {
+    saveQueue();
     void deleteFiles([trackId]);
     logInternalInfo("offlineStore.download discarded", { trackId });
     return;
@@ -986,6 +986,16 @@ function onDownloaded(trackId: string, byteLength: number, mimeType: string): vo
     metadataPending: true,
   };
   setEntries({ ...entries, [trackId]: entry });
+  /*
+   * The song is recorded on disk before the queue lets go of it. In the other order, quitting
+   * between the two writes left a file that nothing recorded and no job to bring it back, and
+   * the next launch deleted it as a stray: a song saved on its own quietly vanished. This way
+   * the worst case is a job for a song already recorded, which the next launch drops.
+   */
+  if (!await saveDocumentNow(MANIFEST_DOCUMENT, { version: 2, entries })) {
+    logInternalWarn("offlineStore.download manifest not saved", { trackId });
+  }
+  saveQueue();
   queueMetadata(trackId);
   logInternalInfo("offlineStore.download complete", { trackId, byteLength });
 }

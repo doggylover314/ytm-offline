@@ -2672,6 +2672,10 @@ struct ProxyHttpRequestInput {
     headers: HashMap<String, String>,
     body_base64: Option<String>,
     timeout_ms: Option<u64>,
+    /// A connection check: failing is an expected answer, and offline it repeats every few
+    /// seconds, so it is not logged.
+    #[serde(default)]
+    quiet: bool,
 }
 
 #[derive(Serialize)]
@@ -3540,6 +3544,40 @@ struct OfflineSaveResult {
 /// right size, and recognisably audio, so a failed or interrupted download can never leave a
 /// file that looks finished. Errors carry a kind (network, expired, storage, ...) that the
 /// frontend queue uses to decide between retrying, fetching a fresh URL, and pausing.
+/// Registers a download of `track_id`, stopping one already running for it.
+///
+/// A second request for a song still downloading comes from a page that reloaded (WebKit does
+/// this after sleep), so the first request's answer has nowhere to go. It is stopped and waited
+/// out rather than refused: refusing counted as a failed attempt and downloaded the song twice,
+/// and two downloads writing one file would corrupt it.
+async fn take_over_download(
+    track_id: &str,
+) -> Result<offline_download::ActiveDownload, offline_download::DownloadError> {
+    use offline_download::{DownloadError, ErrorKind};
+
+    if let Some(registration) = offline_download::register(track_id) {
+        return Ok(registration);
+    }
+    eprintln!(
+        "[internal][tauri][info] offline_audio_save replacing a download still running track_id={}",
+        track_id
+    );
+    offline_download::cancel(track_id);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        if let Some(registration) = offline_download::register(track_id) {
+            return Ok(registration);
+        }
+        if Instant::now() >= deadline {
+            return Err(DownloadError::new(
+                ErrorKind::Network,
+                "an earlier download of this song did not stop",
+            ));
+        }
+    }
+}
+
 #[tauri::command]
 async fn offline_audio_save(
     app: tauri::AppHandle,
@@ -3552,8 +3590,7 @@ async fn offline_audio_save(
     let final_path = offline_entry_path(&app, &track_id)
         .map_err(|error| DownloadError::new(ErrorKind::Invalid, error.message))?;
     offline_dir_for_write(&app).map_err(|error| DownloadError::new(ErrorKind::Storage, error.message))?;
-    let registration = offline_download::register(&track_id)
-        .ok_or_else(|| DownloadError::new(ErrorKind::Invalid, "this track is already downloading"))?;
+    let registration = take_over_download(&track_id).await?;
 
     let request_url = url::Url::parse(&url)
         .map_err(|error| DownloadError::new(ErrorKind::Invalid, format!("bad audio URL: {error}")))?;
@@ -4902,13 +4939,15 @@ async fn proxy_http_request(
         request_url.host_str().unwrap_or("unknown"),
         request_url.path()
     );
-    eprintln!(
-        "[internal][tauri][info] proxy_http_request start method={} url={} headers={} has_body={}",
-        input.method,
-        request_target,
-        input.headers.len(),
-        input.body_base64.is_some()
-    );
+    if !input.quiet {
+        eprintln!(
+            "[internal][tauri][info] proxy_http_request start method={} url={} headers={} has_body={}",
+            input.method,
+            request_target,
+            input.headers.len(),
+            input.body_base64.is_some()
+        );
+    }
 
     /*
      * Outgoing cookies come from the jar, not from the caller.
@@ -5023,11 +5062,13 @@ async fn proxy_http_request(
         // the actual cause (DNS failure, TLS handshake, connection refused/reset) lives in the
         // source chain underneath it and was getting dropped, leaving every network failure
         // indistinguishable in the log from every other one.
-        eprintln!(
-            "[internal][tauri][error] proxy_http_request request failed url={} error={}",
-            input.url,
-            error_cause_chain(&error)
-        );
+        if !input.quiet {
+            eprintln!(
+                "[internal][tauri][error] proxy_http_request request failed url={} error={}",
+                input.url,
+                error_cause_chain(&error)
+            );
+        }
         CommandError {
             message: format!("request failed: {}", error_cause_chain(&error)),
         }
@@ -5092,14 +5133,16 @@ async fn proxy_http_request(
         );
     }
 
-    eprintln!(
-        "[internal][tauri][info] proxy_http_request success method={} url={} status={} bytes={} duration_ms={}",
-        input.method,
-        request_target,
-        status,
-        body.len(),
-        started_at.elapsed().as_millis()
-    );
+    if !input.quiet {
+        eprintln!(
+            "[internal][tauri][info] proxy_http_request success method={} url={} status={} bytes={} duration_ms={}",
+            input.method,
+            request_target,
+            status,
+            body.len(),
+            started_at.elapsed().as_millis()
+        );
+    }
 
     Ok(ProxyHttpResponse {
         status,

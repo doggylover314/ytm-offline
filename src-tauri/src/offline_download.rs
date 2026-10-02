@@ -274,7 +274,7 @@ async fn fetch_range(
                 }
             }
         }
-        tokio::time::sleep(timing.backoff * attempt).await;
+        unless_cancelled(cancelled, tokio::time::sleep(timing.backoff * attempt)).await?;
     }
 }
 
@@ -300,22 +300,20 @@ async fn stream_range(
     timing: Timing,
 ) -> Result<Step, Partial> {
     let fail = |error: DownloadError| Partial { error, written: 0 };
-    let response = send(source, url, timing).await.map_err(fail)?;
+    let response = send(source, url, cancelled, timing).await.map_err(fail)?;
     let mut body = response.bytes_stream();
     let mut written = 0u64;
 
     loop {
-        if cancelled.load(Ordering::SeqCst) {
-            return Err(Partial { error: cancelled_error(), written });
-        }
-        let next = match tokio::time::timeout(timing.stall, body.next()).await {
-            Ok(next) => next,
-            Err(_) => {
+        let next = match unless_cancelled(cancelled, tokio::time::timeout(timing.stall, body.next())).await {
+            Ok(Ok(next)) => next,
+            Ok(Err(_)) => {
                 return Err(Partial {
                     error: DownloadError::new(ErrorKind::Network, "the connection stalled"),
                     written,
                 })
             }
+            Err(error) => return Err(Partial { error, written }),
         };
         let piece = match next {
             None => return Ok(Step { written, overflowed: false }),
@@ -356,7 +354,7 @@ async fn download_whole(
         match result {
             Ok(bytes) => return Ok(bytes),
             Err(error) if is_retryable(&error) && attempt < timing.attempts => {
-                tokio::time::sleep(timing.backoff * attempt).await;
+                unless_cancelled(cancelled, tokio::time::sleep(timing.backoff * attempt)).await?;
             }
             Err(error) => return Err(error),
         }
@@ -377,14 +375,13 @@ async fn download_whole_once(
         source.url.to_string()
     };
     let file = create_file(dest)?;
-    let response = send(source, &url, timing).await?;
+    let response = send(source, &url, cancelled, timing).await?;
     let mut body = response.bytes_stream();
     let mut written = 0u64;
 
     loop {
-        check_cancelled(cancelled)?;
-        let next = tokio::time::timeout(timing.stall, body.next())
-            .await
+        let next = unless_cancelled(cancelled, tokio::time::timeout(timing.stall, body.next()))
+            .await?
             .map_err(|_| DownloadError::new(ErrorKind::Network, "the connection stalled"))?;
         match next {
             None => break,
@@ -421,10 +418,15 @@ async fn download_whole_once(
 }
 
 /// Sends a request and turns the status into an error kind. Waits at most `stall` for headers.
-async fn send(source: &Source<'_>, url: &str, timing: Timing) -> Result<reqwest::Response, DownloadError> {
+async fn send(
+    source: &Source<'_>,
+    url: &str,
+    cancelled: &AtomicBool,
+    timing: Timing,
+) -> Result<reqwest::Response, DownloadError> {
     let request = (source.dress)(source.client.get(url));
-    let response = tokio::time::timeout(timing.stall, request.send())
-        .await
+    let response = unless_cancelled(cancelled, tokio::time::timeout(timing.stall, request.send()))
+        .await?
         .map_err(|_| DownloadError::new(ErrorKind::Network, "the server did not answer"))?
         .map_err(|error| DownloadError::new(ErrorKind::Network, format!("request failed: {error}")))?;
 
@@ -442,6 +444,24 @@ async fn send(source: &Source<'_>, url: &str, timing: Timing) -> Result<reqwest:
 
 fn is_retryable(error: &DownloadError) -> bool {
     error.kind == ErrorKind::Network
+}
+
+/// How often a wait looks at the cancel flag. Without it a cancel waited for the next piece of
+/// data, which on a stalled connection meant the whole stall timeout.
+const CANCEL_POLL: Duration = Duration::from_millis(250);
+
+/// Awaits `future`, giving up with a cancellation error as soon as the download is cancelled.
+async fn unless_cancelled<F: std::future::Future>(
+    cancelled: &AtomicBool,
+    future: F,
+) -> Result<F::Output, DownloadError> {
+    futures_util::pin_mut!(future);
+    loop {
+        check_cancelled(cancelled)?;
+        if let Ok(output) = tokio::time::timeout(CANCEL_POLL, &mut future).await {
+            return Ok(output);
+        }
+    }
 }
 
 fn check_cancelled(cancelled: &AtomicBool) -> Result<(), DownloadError> {
@@ -712,6 +732,34 @@ mod tests {
         let server = serve(LEN, Mode::Normal);
         let (result, _) = run(&server, LEN as u64, &AtomicBool::new(true));
         assert_eq!(result.unwrap_err().kind, ErrorKind::Cancelled);
+    }
+
+    #[test]
+    fn a_cancel_is_felt_during_a_stall() {
+        // The first range goes silent for 3 s and the stall timeout is 10 s away; the cancel
+        // after 300 ms must not wait for either.
+        let server = serve(LEN, Mode::StallFirst);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&cancelled);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            flag.store(true, Ordering::SeqCst);
+        });
+        let client = reqwest::Client::new();
+        let source = Source {
+            client: &client,
+            url: &server.url,
+            total: LEN as u64,
+            dress: &plain,
+            chunk_size: small_chunks,
+        };
+        let dest = std::env::temp_dir().join(format!("ytm-offline-cancel-{}.part", std::process::id()));
+        let slow = Timing { stall: Duration::from_secs(10), ..timing() };
+        let started = std::time::Instant::now();
+        let result = tauri::async_runtime::block_on(download(&source, &dest, &cancelled, slow, &|_, _| {}));
+        let _ = std::fs::remove_file(&dest);
+        assert_eq!(result.unwrap_err().kind, ErrorKind::Cancelled);
+        assert!(started.elapsed() < Duration::from_secs(2), "took {:?}", started.elapsed());
     }
 
     #[test]
