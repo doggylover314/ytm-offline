@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { ClockIcon, CloseIcon, SearchIcon } from "@/ui/icons";
-import type { Album, Artist, Playlist, SearchResults, Track } from "../../datasource/types";
+import type { Album, Artist, Playlist, SearchResults, SearchSuggestions, Track } from "../../datasource/types";
 import type { SearchController } from "../../player/SearchController";
 import { TrackArtwork } from "./TrackArtwork";
 import { useTrackContextMenu } from "./TrackContextMenu";
@@ -132,8 +132,14 @@ export function SearchOverlay({
     };
   }, [isOpen]);
 
+  /*
+   * While typing, only YouTube Music's suggestions: one light request, which also carries the
+   * items the preview shows. A full search, with an artist page for each artist found, ran
+   * every time typing paused; now it runs only when a search is asked for.
+   */
+  const typedQuery = query.trim();
   useEffect(() => {
-    if (!isOpen || query.trim().length < 2) {
+    if (!isOpen || typedQuery.length < 2) {
       requestIdRef.current += 1;
       setSearchResults({ artists: [], tracks: [], albums: [], playlists: [] });
       setSuggestions([]);
@@ -144,36 +150,20 @@ export function SearchOverlay({
     const requestId = ++requestIdRef.current;
     setIsLoading(true);
     const timeoutId = window.setTimeout(() => {
-      const updatePreview = (results: SearchResults) => {
-        if (requestId === requestIdRef.current) setSearchResults(results);
+      const apply = (next: SearchSuggestions) => {
+        if (requestId !== requestIdRef.current) return;
+        setSuggestions(next.queries);
+        setSearchResults(next.results);
       };
-      const updateSuggestions = (nextSuggestions: string[]) => {
-        if (requestId === requestIdRef.current) setSuggestions(nextSuggestions);
-      };
-      void Promise.allSettled([
-        searchController.search(query, updatePreview),
-        searchController.getSearchSuggestions(query, updateSuggestions),
-      ])
-        .then(([resultsResult, suggestionsResult]) => {
-          if (requestId !== requestIdRef.current) return;
-          setSearchResults(
-            resultsResult.status === "fulfilled"
-              ? resultsResult.value
-              : { artists: [], tracks: [], albums: [], playlists: [] },
-          );
-          setSuggestions(
-            suggestionsResult.status === "fulfilled"
-              ? suggestionsResult.value
-              : [],
-          );
-        })
+      void searchController.getSearchSuggestions(typedQuery, apply)
+        .then(apply)
         .finally(() => {
           if (requestId === requestIdRef.current) setIsLoading(false);
         });
     }, 200);
 
     return () => window.clearTimeout(timeoutId);
-  }, [isOpen, query, searchController]);
+  }, [isOpen, typedQuery, searchController]);
 
   if (!isOpen) return null;
 

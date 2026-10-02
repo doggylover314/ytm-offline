@@ -1,5 +1,5 @@
 import type { DataSource } from "../datasource/DataSource";
-import type { SearchResults, Track } from "../datasource/types";
+import type { SearchResults, SearchSuggestions, Track } from "../datasource/types";
 
 export class SearchController {
   constructor(private readonly dataSource: DataSource) {}
@@ -29,10 +29,12 @@ export class SearchController {
 
   async getSearchSuggestions(
     query: string,
-    onUpdate?: (suggestions: string[]) => void,
-  ): Promise<string[]> {
+    onUpdate?: (suggestions: SearchSuggestions) => void,
+  ): Promise<SearchSuggestions> {
     const normalizedQuery = query.trim();
-    if (!normalizedQuery || !this.dataSource.getSearchSuggestions) return [];
+    if (!normalizedQuery || !this.dataSource.getSearchSuggestions) {
+      return { queries: [], results: { artists: [], tracks: [], albums: [], playlists: [] } };
+    }
     return this.dataSource.getSearchSuggestions(normalizedQuery, onUpdate);
   }
 }

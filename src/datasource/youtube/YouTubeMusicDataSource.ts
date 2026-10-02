@@ -37,6 +37,7 @@ import type {
   ResolvedLink,
   SearchCategory,
   SearchResults,
+  SearchSuggestions,
   AuthStage,
   TrackPage,
   Track,
@@ -448,7 +449,7 @@ export class YouTubeMusicDataSource extends DataSource {
   private readonly artistRefreshPromises = new Map<string, Promise<ArtistPage>>();
   /** See `ARTIST_REFRESH_COOLDOWN_MS`. */
   private readonly artistRefreshedAt = new Map<string, number>();
-  private readonly suggestionRefreshPromises = new Map<string, Promise<string[]>>();
+  private readonly suggestionRefreshPromises = new Map<string, Promise<SearchSuggestions>>();
   private readonly recommendationRefreshPromises = new Map<string, Promise<Track[]>>();
   private readonly lyricsRefreshPromises = new Map<string, Promise<Lyrics>>();
   private readonly artistSubscriptionOverrides = new Map<string, { subscribed: boolean; expiresAt: number }>();
@@ -3803,6 +3804,9 @@ export class YouTubeMusicDataSource extends DataSource {
     const priorityArtists = artists.slice(0, 4);
     const hydrated = await Promise.all(
       priorityArtists.map(async (artist) => {
+        // Only artists the results have no picture for, such as those found through a song's
+        // credits: each lookup loads the artist's whole page.
+        if (artist.artworkUrl) return artist;
         const pageArtist = await this.getArtistArtworkFromPage(artist.id);
         if (!pageArtist?.artworkUrl) return artist;
         return {
@@ -5398,13 +5402,14 @@ export class YouTubeMusicDataSource extends DataSource {
 
   async getSearchSuggestions(
     query: string,
-    onUpdate?: (suggestions: string[]) => void,
-  ): Promise<string[]> {
+    onUpdate?: (suggestions: SearchSuggestions) => void,
+  ): Promise<SearchSuggestions> {
+    const none: SearchSuggestions = { queries: [], results: { artists: [], tracks: [], albums: [], playlists: [] } };
     const normalizedQuery = query.trim();
-    if (!normalizedQuery) return [];
+    if (!normalizedQuery) return none;
     const cacheId = normalizedQuery.toLowerCase();
-    const cacheKey = `youtube-music:search-suggestions:v1:${cacheId}`;
-    const cached = await getCachedJson<string[]>(cacheKey);
+    const cacheKey = `youtube-music:search-suggestions:v2:${cacheId}`;
+    const cached = await getCachedJson<SearchSuggestions>(cacheKey);
 
     if (cached) {
       globalThis.setTimeout(() => {
@@ -5425,7 +5430,7 @@ export class YouTubeMusicDataSource extends DataSource {
     try {
       return (await this.refreshSearchSuggestions(normalizedQuery, cacheId, cacheKey)).value;
     } catch {
-      return [];
+      return none;
     }
   }
 
@@ -5433,7 +5438,7 @@ export class YouTubeMusicDataSource extends DataSource {
     query: string,
     cacheId: string,
     cacheKey: string,
-  ): Promise<{ changed: boolean; value: string[] }> {
+  ): Promise<{ changed: boolean; value: SearchSuggestions }> {
     let refresh = this.suggestionRefreshPromises.get(cacheId);
     if (!refresh) {
       refresh = this.fetchSearchSuggestionsFresh(query).finally(() => {
@@ -5447,22 +5452,41 @@ export class YouTubeMusicDataSource extends DataSource {
     return { changed, value };
   }
 
-  private async fetchSearchSuggestionsFresh(normalizedQuery: string): Promise<string[]> {
+  private async fetchSearchSuggestionsFresh(normalizedQuery: string): Promise<SearchSuggestions> {
     try {
       const client = await this.getMusicClient();
       const sections = await client.music.getSearchSuggestions(normalizedQuery);
-      const suggestions = sections.flatMap((section) =>
-        section.contents
-          .map((item) => {
-            const suggestion = item as {
-              suggestion?: { toString(): string };
-            };
-            return suggestion.suggestion?.toString() ?? "";
-          })
-          .filter(Boolean)
-      );
+      const contents = sections.flatMap((section) => [...section.contents]) as unknown as Array<
+        MusicItem & { suggestion?: { toString(): string } }
+      >;
+      const queries = contents
+        .map((item) => item.suggestion?.toString() ?? "")
+        .filter(Boolean);
+      /*
+       * Beside the searches, YouTube Music suggests the artist, songs, albums and playlists the
+       * text most likely means, artwork included. That is all the search box's preview needs;
+       * it used to run a full search, artist pages and all, every time typing paused.
+       */
+      const items = contents.filter((item) => Boolean(item.item_type));
+      const results: SearchResults = {
+        artists: items
+          .filter((item) => item.item_type === "artist")
+          .map((item) => this.toArtist(item))
+          .filter((item): item is Artist => Boolean(item)),
+        tracks: this.songOrVideoItems(items)
+          .map((item) => this.toTrack(item))
+          .filter((item): item is Track => Boolean(item)),
+        albums: items
+          .filter((item) => item.item_type === "album")
+          .map((item) => this.toAlbum(item))
+          .filter((item): item is Album => Boolean(item)),
+        playlists: items
+          .filter((item) => item.item_type === "playlist")
+          .map((item) => this.toPlaylist(item))
+          .filter((item): item is Playlist => Boolean(item)),
+      };
 
-      return [...new Set(suggestions)].slice(0, 3);
+      return { queries: [...new Set(queries)].slice(0, 3), results };
     } catch (error) {
       logInternalWarn("YouTubeMusicDataSource.getSearchSuggestions failed", {
         query: normalizedQuery,

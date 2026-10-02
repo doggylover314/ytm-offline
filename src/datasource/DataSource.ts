@@ -15,6 +15,7 @@ import type {
   RustAudioSource,
   SearchCategory,
   SearchResults,
+  SearchSuggestions,
   AuthStage,
   TrackPage,
   Track,
@@ -58,7 +59,10 @@ export abstract class DataSource {
   /** Resolves a pasted YouTube link. Null when it points at something the app cannot open. */
   resolveLink?(url: string): Promise<ResolvedLink | null>;
   searchTracks?(query: string, onUpdate?: (tracks: Track[]) => void): Promise<Track[]>;
-  getSearchSuggestions?(query: string, onUpdate?: (suggestions: string[]) => void): Promise<string[]>;
+  getSearchSuggestions?(
+    query: string,
+    onUpdate?: (suggestions: SearchSuggestions) => void,
+  ): Promise<SearchSuggestions>;
   getStreamData?(track: Track): Promise<StreamData>;
   /**
    * Pre-pays whatever first-play latency can be paid before there is a play — e.g. warming a

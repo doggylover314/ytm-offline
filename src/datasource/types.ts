@@ -186,6 +186,12 @@ export interface SearchResults {
   playlists: Playlist[];
 }
 
+/** What YouTube Music suggests for a half-typed search: searches to run, and things to open. */
+export interface SearchSuggestions {
+  queries: string[];
+  results: SearchResults;
+}
+
 export interface TrackPage {
   tracks: Track[];
   nextPageKey?: string;
