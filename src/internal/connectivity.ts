@@ -12,6 +12,8 @@ import { logInternalInfo } from "./logging";
  * offline; both answer 204 with an empty body.
  */
 const CHECK_URLS = ["https://www.gstatic.com/generate_204", "https://cp.cloudflare.com/generate_204"];
+/** A probe that has not answered by then is a network that is not working. */
+const PROBE_TIMEOUT_MS = 8_000;
 /** While offline, how often to look again. */
 const OFFLINE_RECHECK_MS = 5_000;
 /** Consecutive failed checks before believing the network is gone; one can be a blip. */
@@ -46,7 +48,7 @@ export function checkConnectivity(): Promise<boolean> {
     let reachable = false;
     if (navigator.onLine !== false) {
       const results = await Promise.allSettled(
-        CHECK_URLS.map((url) => tauriFetch(url, { cache: "no-store", method: "GET" })),
+        CHECK_URLS.map((url) => tauriFetch(url, { cache: "no-store", method: "GET", timeoutMs: PROBE_TIMEOUT_MS, quiet: true })),
       );
       reachable = results.some((result) => result.status === "fulfilled");
     }

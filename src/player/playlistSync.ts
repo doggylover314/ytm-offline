@@ -6,7 +6,15 @@ import { readDocument, saveDocument, saveDocumentNow } from "../internal/documen
 import { errorMessage, isNetworkError } from "../internal/errors";
 import { logInternalInfo, logInternalWarn } from "../internal/logging";
 import type { LibraryController } from "./LibraryController";
-import { hydrateOfflineStore, queuePlaylistDownloads, releasePlaylistDownloads } from "./offlineStore";
+import {
+  collectionDownloadState,
+  hydrateOfflineStore,
+  queuePlaylistDownloads,
+  releasePlaylistDownloads,
+  removeAllDownloads,
+  type CollectionDownloadState,
+  type OfflineState,
+} from "./offlineStore";
 
 /*
  * Synced playlists: a downloaded playlist keeps matching the playlist on YouTube Music. Each
@@ -114,6 +122,21 @@ export function useSyncedPlaylists(): Snapshot {
     getSyncedPlaylists,
     getSyncedPlaylists,
   );
+}
+
+/**
+ * Where a playlist's downloads stand. Its Download button and its row on the Downloads page
+ * both read this, so the two always agree.
+ */
+export function syncedPlaylistDownloadState(
+  entry: SyncedPlaylist | undefined,
+  offline: OfflineState,
+  online = isOnline(),
+): CollectionDownloadState {
+  if (!entry) return { kind: "none" };
+  // No song list until the first sync finishes; a later sync keeps the last one meanwhile.
+  const preparing = entry.trackIds.length === 0 && (entry.syncing || entry.lastSyncedAt === null);
+  return collectionDownloadState(entry.trackIds, { tracked: true, preparing, online }, offline);
 }
 
 /**
@@ -228,4 +251,15 @@ export async function syncAllPlaylists(library: LibraryController): Promise<void
     if (!isOnline()) return;
     await syncPlaylist(entry.playlist, library);
   }
+}
+
+/**
+ * Deletes every download and stops syncing every playlist. Both at once: removing the files
+ * alone would only last until the next sync downloaded them all again.
+ */
+export async function removeAllDownloadsAndStopSyncing(): Promise<void> {
+  await hydrateSyncedPlaylists();
+  publish({});
+  persist();
+  await removeAllDownloads();
 }

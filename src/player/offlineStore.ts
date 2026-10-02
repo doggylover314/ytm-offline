@@ -98,8 +98,19 @@ export interface DownloadJob {
   failureKind: ErrorKind | null;
   failedAt: number | null;
   lastError: string | null;
+  /**
+   * A failed song the user chose to stop trying. Kept so a sync does not queue it again; asking
+   * for it from a download button tries it again.
+   */
+  dismissed?: boolean;
   /** Kept from an earlier copy of the song, when it is downloaded again. */
   keep?: { lyrics?: Lyrics; remoteArtworkUrl?: string };
+}
+
+export interface DownloadFailure {
+  track: Track;
+  message: string;
+  kind: ErrorKind | null;
 }
 
 export interface OfflineState {
@@ -113,6 +124,10 @@ export interface OfflineState {
   downloadingId: string | null;
   /** Songs that gave up, with the reason. */
   failed: Record<string, string>;
+  /** The same songs with their details, for the "Couldn't download" list. */
+  failures: Record<string, DownloadFailure>;
+  /** Failed songs the user stopped trying; they no longer count against a playlist. */
+  skipped: Record<string, true>;
   usedBytes: number;
   paused: PauseReason | null;
   /** What went wrong, for the storage pause. */
@@ -146,14 +161,24 @@ function derive(): OfflineState {
   const queued: string[] = [];
   const pending: Record<string, Track> = {};
   const failed: Record<string, string> = {};
+  const failures: Record<string, DownloadFailure> = {};
+  const skipped: Record<string, true> = {};
   for (const [id, job] of jobs) {
+    if (job.dismissed) {
+      skipped[id] = true;
+      continue;
+    }
     if (job.failed) {
       failed[id] = job.lastError ?? "Download failed";
+      failures[id] = { track: job.track, message: failed[id], kind: job.failureKind };
       continue;
     }
     pending[id] = job.track;
     if (id !== downloadingId) queued.push(id);
   }
+  // A pause only means something while songs are waiting on it; once the last one is cancelled
+  // or released there is nothing paused to talk about.
+  const paused = Object.keys(pending).length > 0 ? pause : null;
   return {
     entries,
     progress,
@@ -161,9 +186,11 @@ function derive(): OfflineState {
     pending,
     downloadingId,
     failed,
+    failures,
+    skipped,
     usedBytes,
-    paused: pause?.reason ?? null,
-    pauseMessage: pause?.message ?? null,
+    paused: paused?.reason ?? null,
+    pauseMessage: paused?.message ?? null,
   };
 }
 
@@ -305,7 +332,7 @@ function countAttempt(job: DownloadJob, kind: ErrorKind, message: string, now: n
 
 /** Whether a sync should try a failed song again. Unplayable songs only retry on request. */
 export function shouldRetryOnSync(job: DownloadJob, now: number): boolean {
-  if (!job.failed || job.failureKind === "unavailable") return false;
+  if (!job.failed || job.dismissed || job.failureKind === "unavailable") return false;
   return now - (job.failedAt ?? 0) >= FAILED_RETRY_AFTER_MS;
 }
 
@@ -387,6 +414,7 @@ function sanitizeJob(raw: unknown): DownloadJob | null {
     failureKind: typeof job.failureKind === "string" ? job.failureKind as ErrorKind : null,
     failedAt: typeof job.failedAt === "number" ? job.failedAt : null,
     lastError: typeof job.lastError === "string" ? job.lastError : null,
+    dismissed: job.dismissed === true && job.failed === true,
     keep: asRecord(job.keep) ? job.keep as DownloadJob["keep"] : undefined,
   };
   // Waits and network counts belong to the run that set them; a new run starts clean.
@@ -556,12 +584,65 @@ export function summarizeDownloads(trackIds: readonly string[], snapshot: Offlin
   let downloaded = 0;
   let pending = 0;
   let failed = 0;
+  let total = 0;
   for (const id of trackIds) {
+    if (snapshot.skipped?.[id] && !snapshot.entries[id]) continue;
+    total += 1;
     if (snapshot.entries[id]) downloaded += 1;
     else if (snapshot.failed[id]) failed += 1;
     else if (snapshot.pending[id]) pending += 1;
   }
-  return { total: trackIds.length, downloaded, pending, failed };
+  return { total, downloaded, pending, failed };
+}
+
+/** Where a playlist's or album's downloads stand, for its Download button. */
+export type CollectionDownloadState =
+  | { kind: "none" }
+  /** Reading the playlist before anything can be queued. */
+  | { kind: "preparing" }
+  | { kind: "downloading" | "waiting" | "paused"; downloaded: number; total: number }
+  | { kind: "incomplete"; downloaded: number; total: number; failedIds: string[] }
+  | { kind: "done"; total: number };
+
+/**
+ * The Download button's state for a set of songs.
+ *
+ * `tracked` is a synced playlist: it stays in a download state even before its songs are
+ * queued, and songs not queued yet count as still to come (the next sync queues them). An album
+ * or an unsynced playlist is judged only by what is actually downloaded or queued.
+ *
+ * `preparing` is a synced playlist whose song list has not arrived yet. Offline it cannot
+ * arrive, so that reads as waiting (with nothing counted) rather than as downloading.
+ */
+export function collectionDownloadState(
+  trackIds: readonly string[],
+  options: { tracked: boolean; preparing: boolean; online?: boolean },
+  snapshot: OfflineState = state,
+): CollectionDownloadState {
+  if (options.tracked && options.preparing) {
+    return options.online ?? isOnline()
+      ? { kind: "preparing" }
+      : { kind: "waiting", downloaded: 0, total: 0 };
+  }
+  const summary = summarizeDownloads(trackIds, snapshot);
+  // A synced playlist that is empty has nothing left to download.
+  if (summary.total === 0) return options.tracked ? { kind: "done", total: 0 } : { kind: "none" };
+  if (summary.downloaded === summary.total) return { kind: "done", total: summary.total };
+
+  const failedIds = trackIds.filter((id) => !snapshot.entries[id] && snapshot.failed[id] && !snapshot.skipped?.[id]);
+  const waiting = summary.pending > 0 || (options.tracked && summary.downloaded + summary.failed < summary.total);
+  if (!waiting) {
+    if (failedIds.length > 0) {
+      return { kind: "incomplete", downloaded: summary.downloaded, total: summary.total, failedIds };
+    }
+    return { kind: "none" };
+  }
+  const kind = snapshot.paused === "offline"
+    ? "waiting"
+    : snapshot.paused
+      ? "paused"
+      : "downloading";
+  return { kind, downloaded: summary.downloaded, total: summary.total };
 }
 
 /* ── Changes ─────────────────────────────────────────────────────────────────────────────── */
@@ -726,12 +807,13 @@ export async function removeAllDownloads(): Promise<void> {
   await deleteFiles(ids);
 }
 
-/** Tries failed songs again: the given ones, or all of them. */
+/** Tries failed songs again: the given ones, or every failure still on the list. */
 export function retryFailedDownloads(trackIds?: readonly string[]): void {
   whenHydrated(() => {
     let changed = false;
     for (const [id, job] of jobs) {
-      if (!job.failed || (trackIds && !trackIds.includes(id))) continue;
+      if (!job.failed) continue;
+      if (trackIds ? !trackIds.includes(id) : job.dismissed) continue;
       jobs.set(id, resetJob(job));
       changed = true;
     }
@@ -739,6 +821,17 @@ export function retryFailedDownloads(trackIds?: readonly string[]): void {
     saveQueue();
     publish();
     void pump();
+  });
+}
+
+/** Stops trying a failed song: it leaves the "Couldn't download" list and no sync retries it. */
+export function dismissFailedDownload(trackId: string): void {
+  whenHydrated(() => {
+    const job = jobs.get(trackId);
+    if (!job?.failed || job.dismissed) return;
+    jobs.set(trackId, { ...job, dismissed: true });
+    saveQueue();
+    publish();
   });
 }
 
@@ -812,12 +905,14 @@ async function pump(): Promise<void> {
   try {
     for (;;) {
       if (moving || pause?.reason === "storage") break;
+      // Paused only while something is waiting; failed songs alone are not held up by anything.
+      const waiting = nextDueJob(Number.POSITIVE_INFINITY) !== null;
       if (usedBytes >= getOfflineMaxBytes()) {
-        if (jobs.size > 0) setPause("limit");
+        setPause(waiting ? "limit" : null);
         break;
       }
       if (!isOnline()) {
-        if (nextDueJob(Number.POSITIVE_INFINITY)) setPause("offline");
+        setPause(waiting ? "offline" : null);
         break;
       }
       if (pause) setPause(null);

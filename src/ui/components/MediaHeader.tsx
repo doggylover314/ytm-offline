@@ -19,6 +19,7 @@ import {
 import { SpinnerSteps } from "@/components/motion/loader";
 import { FloatingPanel } from "./FloatingPanel";
 import { TrackArtwork } from "./TrackArtwork";
+import type { CollectionDownloadState } from "../../player/offlineStore";
 
 /**
  * "24 songs · 1 hr 32 min".
@@ -97,27 +98,17 @@ interface MediaHeaderProps {
   onAddToPlaylist?: () => void;
   /** Offline download for the whole collection. Omit to hide the control. */
   download?: {
-    /** Queues every not-yet-downloaded track in this collection for offline use. */
+    /** Where the downloads stand; see `collectionDownloadState`. */
+    state: CollectionDownloadState;
+    /** Starts downloading (for a playlist, also keeps it in sync). */
     onStart: () => void;
-    onStop?: () => void;
-    isSynced?: boolean;
     /**
-     * The collection is still being paged in before the download can start.
-     *
-     * Worth showing: on a long playlist this takes several round trips, and a button that
-     * looks idle after a click reads as broken and gets clicked again.
+     * Asks to remove the downloads. The page confirms first. Omit where they cannot be removed
+     * from here, and the button is inert once the download has started.
      */
-    isBusy?: boolean;
-    /**
-     * How much of this collection is already offline, so the button can say what pressing it
-     * would actually do — "all 12 downloaded" is a different message from "download 9 songs".
-     */
-    counts?: {
-      downloaded: number;
-      total: number;
-      /** True while pages remain unfetched, so `total` is a floor rather than the real total. */
-      isPartial?: boolean;
-    };
+    onRemove?: () => void;
+    /** Tries the songs that could not be downloaded again. */
+    onRetry?: () => void;
   };
   /** Play-from-the-top-on-repeat. Omit to hide the control. */
   loop?: {
@@ -188,8 +179,6 @@ export function MediaHeader({
      rather than threading `playback?.` through every branch. */
   const isPlaying = playback?.isPlaying ?? false;
   const isLoading = playback?.isLoading ?? false;
-  const downloadBusy = download?.isBusy ?? false;
-  const downloadCounts = download?.counts;
   const loopMode = loop?.mode ?? "in-order";
   const isLooping = loopMode !== "in-order";
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -278,53 +267,38 @@ export function MediaHeader({
           ) : null}
 
           {download ? (() => {
-            /*
-             * Disabled once everything here is already offline. Re-queueing downloaded tracks
-             * would be a no-op the user cannot see, so the button says so instead of appearing
-             * to do nothing.
-             */
-            const total = downloadCounts?.total ?? 0;
-            const downloaded = downloadCounts?.downloaded ?? 0;
-            const remaining = Math.max(0, total - downloaded);
-            // Never "all downloaded" while pages remain unfetched — the unseen ones are not.
-            const allDownloaded = total > 0 && remaining === 0 && !downloadCounts?.isPartial;
-            const isSaved = Boolean(download.isSynced) || allDownloaded;
-
+            const { state } = download;
+            const started = state.kind !== "none";
+            const progress = "total" in state && state.total > 0 && "downloaded" in state
+              ? state.downloaded / state.total
+              : 0;
+            const label = state.kind === "none"
+              ? "Download"
+              : state.kind === "preparing" || ("total" in state && state.total === 0 && state.kind !== "done")
+                ? "Downloading"
+                : state.kind === "downloading"
+                  ? `Downloading ${state.downloaded} of ${state.total}`
+                  : state.kind === "done"
+                    ? "Downloaded"
+                    : `${state.downloaded} of ${state.total} downloaded`;
             return (
-              <Tooltip
-                content={
-                  download.isSynced
-                    ? "Stop syncing this playlist"
-                    : allDownloaded
-                    ? "Every song here is downloaded"
-                    : downloadCounts?.isPartial
-                      ? "Download every song here for offline"
-                      : remaining > 0
-                        ? `Download ${remaining} song${remaining === 1 ? "" : "s"} for offline`
-                        : "Download for offline"
-                }
-              >
+              <Tooltip content={started ? (download.onRemove ? "Remove downloads" : label) : "Download for offline"}>
                 <button
                   type="button"
-                  disabled={actionsDisabled || (allDownloaded && !download.onStop) || downloadBusy}
-                  onClick={download.isSynced ? download.onStop : download.onStart}
-                  aria-busy={downloadBusy}
-                  aria-pressed={isSaved}
-                  aria-label={download.isSynced ? "Stop syncing playlist" : download.onStop ? "Download and sync playlist" : allDownloaded ? "Already downloaded" : "Download for offline"}
-                  className={cn(HEADER_SECONDARY_BUTTON, "pl-3 pr-4")}
+                  disabled={actionsDisabled || (started && !download.onRemove)}
+                  onClick={started ? download.onRemove : download.onStart}
+                  aria-pressed={started}
+                  aria-label={started ? (download.onRemove ? `${label}. Remove downloads` : label) : "Download for offline"}
+                  className={cn(HEADER_SECONDARY_BUTTON, "pl-3 pr-4 tabular-nums")}
                 >
-                  {downloadBusy ? (
-                    <DownloadProgressIcon
-                      size={20}
-                      progress={total > 0 ? downloaded / total : 0}
-                      aria-hidden="true"
-                    />
-                  ) : isSaved ? (
+                  {state.kind === "none" ? (
+                    <DownloadIcon size={20} aria-hidden="true" />
+                  ) : state.kind === "done" ? (
                     <DownloadActiveIcon size={20} aria-hidden="true" />
                   ) : (
-                    <DownloadIcon size={20} aria-hidden="true" />
+                    <DownloadProgressIcon size={20} progress={progress} aria-hidden="true" />
                   )}
-                  {downloadBusy ? "Downloading" : isSaved ? "Downloaded" : "Download"}
+                  {label}
                 </button>
               </Tooltip>
             );
@@ -418,7 +392,31 @@ export function MediaHeader({
             </FloatingPanel>
           ) : null}
 
-          {status ? <span className="ml-2 text-[13px] text-muted-foreground">{status}</span> : null}
+          {download?.state.kind === "waiting" ? (
+            <span className="ml-2 text-[13px] text-[#E0B64A]">Waiting for a connection</span>
+          ) : download?.state.kind === "paused" ? (
+            <span className="ml-2 text-[13px] text-[#E0B64A]">Downloads are paused</span>
+          ) : download?.state.kind === "incomplete" ? (
+            <>
+              <span className="ml-2 text-[13px] text-destructive">
+                {download.state.failedIds.length} couldn't be downloaded
+              </span>
+              {download.onRetry ? (
+                <button
+                  type="button"
+                  onClick={download.onRetry}
+                  className={cn(
+                    "h-8 rounded px-3 text-[13px] font-medium text-foreground transition-colors hover:bg-card",
+                    FOCUS_RING,
+                  )}
+                >
+                  Retry
+                </button>
+              ) : null}
+            </>
+          ) : status ? (
+            <span className="ml-2 text-[13px] text-muted-foreground">{status}</span>
+          ) : null}
         </div>
       </div>
     </header>

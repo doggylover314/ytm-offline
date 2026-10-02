@@ -9,6 +9,7 @@
 export {};
 
 import {
+  collectionDownloadState,
   MAX_ATTEMPTS,
   planRetry,
   reconcileManifest,
@@ -138,6 +139,56 @@ equal(
   summarizeDownloads(["a", "b", "c", "d", "e"], snapshot),
   { total: 5, downloaded: 2, pending: 1, failed: 1 },
   "a playlist counts downloaded, pending and failed songs; one not queued yet is none of these",
+);
+
+/* ── The Download button ──────────────────────────────────────────────────────────────── */
+
+const view = (overrides: Partial<OfflineState>) => ({
+  entries: {}, pending: {}, failed: {}, paused: null, ...overrides,
+}) as unknown as OfflineState;
+const ids = ["a", "b", "c"];
+const synced = { tracked: true, preparing: false };
+const album = { tracked: false, preparing: false };
+
+equal(collectionDownloadState(ids, { tracked: true, preparing: true, online: true }, view({})).kind, "preparing",
+  "a playlist being read for the first time is preparing");
+equal(
+  collectionDownloadState([], { tracked: true, preparing: true, online: false }, view({})),
+  { kind: "waiting", downloaded: 0, total: 0 },
+  "a playlist that cannot be read offline is waiting, not downloading",
+);
+equal(collectionDownloadState([], synced, view({})), { kind: "done", total: 0 },
+  "a synced playlist that is empty has nothing left to download");
+equal(collectionDownloadState(ids, album, view({})).kind, "none", "an album nobody downloaded is not downloaded");
+equal(
+  collectionDownloadState(ids, synced, view({ entries: { a: entry("a", 1) }, pending: { b: entry("b", 0).track } })),
+  { kind: "downloading", downloaded: 1, total: 3 },
+  "songs still queued mean downloading, counted against the whole playlist",
+);
+equal(
+  collectionDownloadState(ids, synced, view({ entries: { a: entry("a", 1) } })).kind,
+  "downloading",
+  "a synced playlist with songs not queued yet is still downloading, not done",
+);
+equal(
+  collectionDownloadState(ids, synced, view({ pending: { a: entry("a", 0).track }, paused: "offline" })).kind,
+  "waiting",
+  "no connection reads as waiting",
+);
+equal(
+  collectionDownloadState(ids, synced, view({ pending: { a: entry("a", 0).track }, paused: "storage" })).kind,
+  "paused",
+  "a storage problem reads as paused",
+);
+equal(
+  collectionDownloadState(ids, synced, view({ entries: { a: entry("a", 1), b: entry("b", 1) }, failed: { c: "gone" } })),
+  { kind: "incomplete", downloaded: 2, total: 3, failedIds: ["c"] },
+  "nothing left to do but failures is incomplete, with the failures to retry",
+);
+equal(
+  collectionDownloadState(ids, synced, view({ entries: { a: entry("a", 1), b: entry("b", 1), c: entry("c", 1) } })),
+  { kind: "done", total: 3 },
+  "only every song downloaded is done",
 );
 
 console.log("offlineStore.check passed");

@@ -184,10 +184,12 @@ import {
 } from "../../internal/audioQuality";
 import {
   getOfflineMaxBytes,
-  removeAllDownloads,
   setOfflineMaxBytes,
   useOfflineState,
 } from "../../player/offlineStore";
+import { removeAllDownloadsAndStopSyncing } from "../../player/playlistSync";
+import { formatBytes, formatSongCount } from "@/lib/format";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 /*
  * Layout, from the approved design: each section is a title over a stack of rows, 2px apart,
@@ -687,6 +689,7 @@ export function SettingsPage({
     () => Number.isFinite(getOfflineMaxBytes()) ? getOfflineMaxBytes() / 1024 ** 3 : 0,
   );
   const [clearingDownloads, setClearingDownloads] = useState(false);
+  const [isConfirmingRemoveAll, setIsConfirmingRemoveAll] = useState(false);
   const lastFmScrobblingEnabled = useLastFmScrobblingEnabled();
   const discordPresenceEnabled = useDiscordPresenceEnabled();
   const localPlaylists = useSyncExternalStore(
@@ -1000,12 +1003,6 @@ export function SettingsPage({
     return () => window.removeEventListener("keydown", handleShortcutKeyDown, true);
   }, [listeningShortcut]);
 
-  const formatBytes = (bytes: number) => {
-    if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
-    if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-    return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
-  };
-
   const downloadedCount = Object.keys(offlineState.entries).length;
   const activeTabLabel = SETTINGS_TABS.find((tab) => tab.id === activeTab)?.label ?? "Settings";
 
@@ -1313,7 +1310,7 @@ export function SettingsPage({
               description={
                 <span className="tabular-nums">
                   {offlineState.usedBytes > 0 || downloadedCount > 0
-                    ? `${downloadedCount} songs · ${formatBytes(offlineState.usedBytes)}`
+                    ? `${formatSongCount(downloadedCount)} · ${formatBytes(offlineState.usedBytes)}`
                     : "No songs downloaded yet."}
                   {offlineState.downloadingId
                     ? offlineState.progress !== null
@@ -1327,17 +1324,30 @@ export function SettingsPage({
               }
             >
               {() => (
-                <button
-                  className={BUTTON_DESTRUCTIVE}
-                  type="button"
-                  disabled={clearingDownloads || downloadedCount === 0}
-                  onClick={() => {
-                    setClearingDownloads(true);
-                    void removeAllDownloads().finally(() => setClearingDownloads(false));
-                  }}
-                >
-                  {clearingDownloads ? "Removing..." : "Remove all"}
-                </button>
+                <>
+                  <button
+                    className={BUTTON_DESTRUCTIVE}
+                    type="button"
+                    disabled={clearingDownloads || downloadedCount === 0}
+                    onClick={() => setIsConfirmingRemoveAll(true)}
+                  >
+                    {clearingDownloads ? "Removing..." : "Remove all"}
+                  </button>
+                  <ConfirmDialog
+                    open={isConfirmingRemoveAll}
+                    title="Remove all downloads?"
+                    confirmLabel="Remove all"
+                    destructive
+                    onCancel={() => setIsConfirmingRemoveAll(false)}
+                    onConfirm={() => {
+                      setIsConfirmingRemoveAll(false);
+                      setClearingDownloads(true);
+                      void removeAllDownloadsAndStopSyncing().finally(() => setClearingDownloads(false));
+                    }}
+                  >
+                    {`All ${formatSongCount(downloadedCount)} (${formatBytes(offlineState.usedBytes)}) will be deleted from this computer, and downloaded playlists will stop syncing. Your playlists stay in your library.`}
+                  </ConfirmDialog>
+                </>
               )}
             </SettingRow>
           </SettingsSection>

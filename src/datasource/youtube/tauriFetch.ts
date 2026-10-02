@@ -67,6 +67,8 @@ export function setAuthConfirmedHandler(handler: ((at: number) => void) | null):
 
 type TauriFetchInit = RequestInit & {
   timeoutMs?: number;
+  /** Failing is an expected answer (a connectivity probe), so it is not logged as an error. */
+  quiet?: boolean;
 };
 
 function normalizeUrl(input: RequestInfo | URL): string {
@@ -341,11 +343,13 @@ export async function tauriFetch(input: RequestInfo | URL, init?: TauriFetchInit
       headers: proxyResponse.headers,
     });
   } catch (error) {
-    logInternalError("tauriFetch.invoke failed", error, {
-      method,
-      url,
-      durationMs: Math.round(performance.now() - startedAt),
-    });
+    if (!init?.quiet) {
+      logInternalError("tauriFetch.invoke failed", error, {
+        method,
+        url,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+    }
     throw error;
   }
 }

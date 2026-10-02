@@ -11,7 +11,15 @@ import { useTrackContextMenu } from "../components/TrackContextMenu";
 import { usePlaylistContextMenu } from "../components/PlaylistContextMenu";
 import { SelectionBar } from "../components/SelectionBar";
 import { useTrackSelection } from "../hooks/useTrackSelection";
-import { queueDownloads, useOfflineState } from "../../player/offlineStore";
+import {
+  collectionDownloadState,
+  queueDownloads,
+  removeDownload,
+  retryFailedDownloads,
+  useOfflineState,
+} from "../../player/offlineStore";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { formatBytes, formatSongCount } from "@/lib/format";
 import { ArtistLinks } from "../components/ArtistLinks";
 import { formatCollectionMeta, MediaHeader } from "../components/MediaHeader";
 import { useKeyboardShortcuts } from "../settings/keyboardShortcuts";
@@ -57,13 +65,15 @@ export function AlbumView({ album, playerController, libraryController }: AlbumV
    * store is a count that drifts the moment a download finishes elsewhere.
    */
   const offlineState = useOfflineState();
-  const downloadCounts = useMemo(
-    () => ({
-      downloaded: tracks.filter((track) => Boolean(offlineState.entries[track.id])).length,
-      total: tracks.length,
-    }),
-    [tracks, offlineState.entries],
+  const downloadState = useMemo(
+    () => collectionDownloadState(tracks.map((track) => track.id), { tracked: false, preparing: false }, offlineState),
+    [tracks, offlineState],
   );
+  const downloadedHere = useMemo(() => {
+    const entries = tracks.map((track) => offlineState.entries[track.id]).filter(Boolean);
+    return { count: entries.length, bytes: entries.reduce((total, entry) => total + entry.byteLength, 0) };
+  }, [tracks, offlineState.entries]);
+  const [isConfirmingRemove, setIsConfirmingRemove] = useState(false);
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -189,13 +199,35 @@ export function AlbumView({ album, playerController, libraryController }: AlbumV
         }}
         onAddToQueue={() => playerController.addTracksToQueue(tracks)}
         onAddToPlaylist={() => openPlaylistPicker(tracks[0], tracks)}
-        download={{ onStart: () => queueDownloads(tracks), counts: downloadCounts }}
+        download={{
+          state: downloadState,
+          onStart: () => queueDownloads(tracks),
+          onRemove: () => setIsConfirmingRemove(true),
+          onRetry: downloadState.kind === "incomplete"
+            ? () => retryFailedDownloads(downloadState.failedIds)
+            : undefined,
+        }}
         menuItems={[{
           label: "Album options",
           icon: <MoreIcon size={18} aria-hidden="true" />,
           onSelect: (event) => openAlbumMenu(event, album),
         }]}
       />
+      <ConfirmDialog
+        open={isConfirmingRemove}
+        title="Remove downloads?"
+        confirmLabel="Remove downloads"
+        destructive
+        onCancel={() => setIsConfirmingRemove(false)}
+        onConfirm={() => {
+          setIsConfirmingRemove(false);
+          // Removes this album's own claim on each song, downloaded or still queued; a song a
+          // synced playlist also wants stays for that playlist.
+          for (const track of tracks) void removeDownload(track.id);
+        }}
+      >
+        {`The ${formatSongCount(downloadedHere.count)} downloaded from ${album.title} (${formatBytes(downloadedHere.bytes)}) will be deleted from this computer. Songs that are also in a downloaded playlist stay.`}
+      </ConfirmDialog>
       {error && <p className="px-2 py-10 text-center text-sm text-muted-foreground">{error}</p>}
       {/*
        * The toolbar stands apart from the loading state below it: it doesn't depend on the

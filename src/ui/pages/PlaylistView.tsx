@@ -13,8 +13,22 @@ import { Tooltip } from "@/components/motion/tooltip";
 import { logInternalError } from "../../internal/logging";
 import { SelectionBar } from "../components/SelectionBar";
 import { useTrackSelection } from "../hooks/useTrackSelection";
-import { getOfflineTrack, queueDownloads, useOfflineState } from "../../player/offlineStore";
-import { disablePlaylistSync, enablePlaylistSync, getSyncedPlaylists, useSyncedPlaylists } from "../../player/playlistSync";
+import {
+  getOfflineTrack,
+  queueDownloads,
+  retryFailedDownloads,
+  useOfflineState,
+} from "../../player/offlineStore";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { formatBytes, formatSongCount } from "@/lib/format";
+import {
+  disablePlaylistSync,
+  enablePlaylistSync,
+  getSyncedPlaylists,
+  syncedPlaylistDownloadState,
+  useSyncedPlaylists,
+} from "../../player/playlistSync";
+import { useIsOnline } from "../../internal/connectivity";
 import { usePlaylistContextMenu } from "../components/PlaylistContextMenu";
 import { formatCollectionMeta, HEADER_SECONDARY_BUTTON, MediaHeader } from "../components/MediaHeader";
 import { isLikedSongsId, likedSongsCover } from "../likedSongsArtwork";
@@ -286,14 +300,19 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
   const offlineState = useOfflineState();
   const syncedPlaylists = useSyncedPlaylists();
   const syncState = playlist ? syncedPlaylists[playlist.id] : undefined;
-  const downloadCounts = useMemo(
-    () => ({
-      downloaded: tracks.filter((track) => Boolean(offlineState.entries[track.id])).length,
-      total: tracks.length,
-      isPartial: hasMoreTracks,
-    }),
-    [tracks, offlineState.entries, hasMoreTracks],
+  const isOnline = useIsOnline();
+  const downloadState = useMemo(
+    () => syncedPlaylistDownloadState(syncState, offlineState, isOnline),
+    [syncState, offlineState, isOnline],
   );
+  /** What removing the downloads would delete, for the confirmation. */
+  const downloadedHere = useMemo(() => {
+    const entries = (syncState?.trackIds ?? [])
+      .map((trackId) => offlineState.entries[trackId])
+      .filter(Boolean);
+    return { count: entries.length, bytes: entries.reduce((total, entry) => total + entry.byteLength, 0) };
+  }, [syncState, offlineState.entries]);
+  const [isConfirmingRemove, setIsConfirmingRemove] = useState(false);
 
   /* Ticks once a minute while there is a sync time to show, so "2 min ago" does not freeze. */
   const lastSyncedAt = syncState?.lastSyncedAt ?? null;
@@ -790,13 +809,14 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
             void collectAllTracks().then((all) => openPlaylistPicker(all[0], all));
           }}
           download={{
+            state: downloadState,
             onStart: () => {
               if (playlist) void enablePlaylistSync(playlist, libraryController);
             },
-            onStop: () => { if (playlist) void disablePlaylistSync(playlist.id); },
-            isSynced: Boolean(syncState),
-            counts: downloadCounts,
-            isBusy: Boolean(syncState?.syncing),
+            onRemove: () => setIsConfirmingRemove(true),
+            onRetry: downloadState.kind === "incomplete"
+              ? () => retryFailedDownloads(downloadState.failedIds)
+              : undefined,
           }}
           menuItems={[{
             label: "Playlist options",
@@ -810,6 +830,21 @@ export function PlaylistView({ playlist, playerController, libraryController }: 
               : undefined}
         />
         <PlaylistDescription playlist={playlist} libraryController={libraryController} />
+        <ConfirmDialog
+          open={isConfirmingRemove}
+          title="Remove downloads?"
+          confirmLabel="Remove downloads"
+          destructive
+          onCancel={() => setIsConfirmingRemove(false)}
+          onConfirm={() => {
+            setIsConfirmingRemove(false);
+            void disablePlaylistSync(playlist.id);
+          }}
+        >
+          {downloadedHere.count > 0
+            ? `${playlist.title} will stop syncing, and its ${formatSongCount(downloadedHere.count)} (${formatBytes(downloadedHere.bytes)}) will be deleted from this computer. Songs you saved on their own or in another downloaded playlist stay.`
+            : `${playlist.title} will stop downloading and syncing.`}
+        </ConfirmDialog>
       </div>
       {error && <p className="px-2 py-10 text-center text-sm text-muted-foreground">{error}</p>}
       {!isLoading && !error && !hasMoreTracks && tracks.length === 0 && (
