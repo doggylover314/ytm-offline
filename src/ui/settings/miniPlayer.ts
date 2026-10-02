@@ -13,7 +13,8 @@ import {
   readLocalJsonSetting,
   writeLocalBooleanSetting,
 } from "../../internal/durableLocalSetting";
-import { setAppSetting } from "../../internal/appSettings";
+import { invoke } from "@tauri-apps/api/core";
+import { removeAppSetting, setAppSetting } from "../../internal/appSettings";
 
 const MINI_PLAYER_LABEL = "mini-player";
 const STORAGE_KEY = "mini-player-enabled";
@@ -250,12 +251,26 @@ export function destroyMiniPlayerWindow(): Promise<void> {
   });
 }
 
-export async function resetMiniPlayerPosition() {
-  const miniWin = await WebviewWindow.getByLabel("mini-player");
+let placementSupported: Promise<boolean> | null = null;
+
+/** False under Wayland, where the compositor rather than the app decides where windows go. */
+export function windowPlacementSupported(): Promise<boolean> {
+  placementSupported ??= invoke<boolean>("window_placement_supported").catch(() => true);
+  return placementSupported;
+}
+
+/** Puts the mini player where it was left, or at the bottom center of the screen. */
+export async function placeMiniPlayer(miniWin: WebviewWindow) {
+  const savedPosition = getSavedMiniPlayerPosition();
+  if (savedPosition) {
+    await miniWin.setPosition(new PhysicalPosition(savedPosition.x, savedPosition.y));
+    return;
+  }
+
   const monitor = await currentMonitor()
     ?? await primaryMonitor()
     ?? (await availableMonitors())[0];
-  if (!miniWin || !monitor) return;
+  if (!monitor) return;
 
   const size = await miniWin.outerSize();
   const x = monitor.position.x + Math.round((monitor.size.width - size.width) / 2);
@@ -263,6 +278,24 @@ export async function resetMiniPlayerPosition() {
 
   await miniWin.setPosition(new PhysicalPosition(x, y));
   saveMiniPlayerPosition({ x, y });
+}
+
+/*
+ * Forgets where the mini player was left, so it opens at the bottom center. It usually is not
+ * open when this is pressed (it only exists while something plays), so forgetting is the part
+ * that matters; an open one is moved straight away.
+ */
+export async function resetMiniPlayerPosition() {
+  if (positionSaveTimer !== null) window.clearTimeout(positionSaveTimer);
+  positionSaveTimer = null;
+  try {
+    localStorage.removeItem(POSITION_STORAGE_KEY);
+  } catch {
+    // The settings file below is the durable copy.
+  }
+  await removeAppSetting(POSITION_STORAGE_KEY);
+  const miniWin = await WebviewWindow.getByLabel(MINI_PLAYER_LABEL);
+  if (miniWin) await placeMiniPlayer(miniWin);
 }
 
 export function useMiniPlayerEnabled() {

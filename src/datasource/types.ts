@@ -120,16 +120,6 @@ export interface ArtistPage {
 export type ArtistNotificationLevel = "all" | "personalized" | "none";
 
 /** One entry from the account's notification inbox. */
-export interface FeedNotification {
-  id: string;
-  text: string;
-  sentAtText?: string;
-  thumbnailUrl?: string;
-  /** Present when the notification points at a specific video. */
-  videoId?: string;
-  read: boolean;
-}
-
 /**
  * Where a pasted YouTube link points, once resolved.
  *

@@ -90,18 +90,12 @@ import { useReduceMotion } from "./settings/renderEffects";
 
 import { emit, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import {
-  availableMonitors,
-  currentMonitor,
-  getCurrentWindow,
-  primaryMonitor,
-} from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { logInternalWarn } from "../internal/logging";
-import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import {
   destroyMiniPlayerWindow,
   ensureMiniPlayerWindow,
-  getSavedMiniPlayerPosition,
+  placeMiniPlayer,
   saveMiniPlayerPosition,
   useMiniPlayerEnabled,
   useMiniPlayerWindowLive,
@@ -124,7 +118,6 @@ const KEYCHAIN_NOTICE_COMPLETE_KEY = "yt-music-dock:keychain-notice-complete";
 const LOADING_SCREEN_MIN_MS = 1000;
 const MOUSE_BACK_BUTTON = 3;
 const MOUSE_FORWARD_BUTTON = 4;
-const MINI_PLAYER_BOTTOM_MARGIN = 24;
 // Safety net only — the suppression is normally cleared on pointerup or refocus.
 // A long fixed timeout used to swallow the mini player when the window was moved
 // and then minimised shortly after.
@@ -221,26 +214,6 @@ function stripNavigationHistory(tab: Tab): Tab {
   const { navigationHistory, ...sessionTab } = tab;
   void navigationHistory;
   return sessionTab;
-}
-
-async function placeMiniPlayerAtBottomCenter(miniWin: WebviewWindow) {
-  const savedPosition = getSavedMiniPlayerPosition();
-  if (savedPosition) {
-    await miniWin.setPosition(new PhysicalPosition(savedPosition.x, savedPosition.y));
-    return;
-  }
-
-  const monitor = await currentMonitor()
-    ?? await primaryMonitor()
-    ?? (await availableMonitors())[0];
-  if (!monitor) return;
-
-  const size = await miniWin.outerSize();
-  const x = monitor.position.x + Math.round((monitor.size.width - size.width) / 2);
-  const y = monitor.position.y + monitor.size.height - size.height - MINI_PLAYER_BOTTOM_MARGIN;
-
-  await miniWin.setPosition(new PhysicalPosition(x, y));
-  saveMiniPlayerPosition({ x, y });
 }
 
 function readLocalOnboardingComplete(): boolean {
@@ -1625,16 +1598,16 @@ useEffect(() => {
       const miniWin = await ensureMiniPlayerWindow();
       if (!miniWin) return;
 
-      // Placed on every show, because every show is a new window. `placeMiniPlayerAtBottomCenter`
+      // Placed on every show, because every show is a new window. `placeMiniPlayer`
       // prefers the saved position, so a window the user dragged still comes back where they left it.
       try {
-        await placeMiniPlayerAtBottomCenter(miniWin);
+        await placeMiniPlayer(miniWin);
       } catch (_) {}
 
       await miniWin.show();
       if (isLinux) {
         try {
-          await placeMiniPlayerAtBottomCenter(miniWin);
+          await placeMiniPlayer(miniWin);
         } catch (_) {}
       }
       await miniWin.setFocus();

@@ -8,7 +8,6 @@ import type {
   Album,
   ArtistPage,
   AuthPrompt,
-  FeedNotification,
   LibrarySnapshot,
   Lyrics,
   Playlist,
@@ -134,9 +133,6 @@ export abstract class DataSource {
   getArtist?(artistId: string, onUpdate?: (artist: ArtistPage) => void): Promise<ArtistPage>;
   setArtistSubscribed?(artistId: string, subscribed: boolean): Promise<void>;
   setArtistNotificationLevel?(artistId: string, level: ArtistNotificationLevel): Promise<void>;
-  /** The account's notification inbox, newest first. */
-  getNotifications?(): Promise<FeedNotification[]>;
-  getUnseenNotificationCount?(): Promise<number>;
   getPlaylistTracks?(playlist: Playlist, onUpdate?: (tracks: Track[]) => void): Promise<Track[]>;
   getPlaylistTrackPage?(
     playlist: Playlist,

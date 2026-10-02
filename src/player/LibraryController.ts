@@ -13,7 +13,6 @@ import type {
   AuthFlow,
   AuthProgress,
   AuthStage,
-  FeedNotification,
   LibrarySnapshot,
   Playlist,
   ResolvedLink,
@@ -638,17 +637,6 @@ export class LibraryController {
     return this.dataSource.setArtistNotificationLevel(artist.id, level);
   }
 
-  async getNotifications(): Promise<FeedNotification[]> {
-    if (!this.dataSource.getNotifications) return [];
-    if (this.state.status === "signed-out") return [];
-    return this.dataSource.getNotifications();
-  }
-
-  async getUnseenNotificationCount(): Promise<number> {
-    if (!this.dataSource.getUnseenNotificationCount) return 0;
-    if (this.state.status === "signed-out") return 0;
-    return this.dataSource.getUnseenNotificationCount();
-  }
 
   /** Discovery shelves for a track. Empty rather than throwing — this is never the main event. */
   async getRelated(track: Track): Promise<BrowseShelf[]> {

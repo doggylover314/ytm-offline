@@ -66,9 +66,7 @@ import {
 } from "../settings/autostart";
 import {
   setCompactPlayerBar,
-  setExtraPlayerControlsAlwaysVisible,
   useCompactPlayerBar,
-  useExtraPlayerControlsAlwaysVisible,
 } from "../settings/playerControls";
 import {
   RENDER_EFFECTS,
@@ -77,7 +75,6 @@ import {
   useEffectDisabled,
   usePotatoPcMode,
 } from "../settings/renderEffects";
-import { setMadeForYouVisible, useMadeForYouVisible } from "../settings/homeSections";
 import { GoogleSignInButton } from "../components/GoogleSignInButton";
 import { DownloadLocationSetting } from "../components/DownloadLocationSetting";
 import { ExternalLinkButton } from "../components/ExternalLinkButton";
@@ -100,11 +97,6 @@ import {
   useLyricsTranslationLang,
 } from "../settings/lyricsTranslation";
 import {
-  setToolbarItemVisible,
-  TOOLBAR_ITEMS,
-  useToolbarItemVisible,
-} from "../settings/toolbarItems";
-import {
   setForceWindowControls,
   setNativeWindowControls,
   useForceWindowControls,
@@ -112,6 +104,7 @@ import {
 } from "../settings/windowControls";
 import {
   resetMiniPlayerPosition,
+  windowPlacementSupported,
   setMiniPlayerEnabled,
   setMiniPlayerHoverAction,
   useMiniPlayerEnabled,
@@ -452,7 +445,7 @@ function PotatoPcSettings() {
 }
 
 /**
- * Same reason as `ToolbarItemToggle`: one subscription per row.
+ * Its own component so each row holds its own subscription rather than one per effect here.
  *
  * The switch reads as "effect on", the store as "effect disabled" — inverted here rather than
  * in the store, because the attribute the CSS matches on is a list of what is *off*, and an
@@ -466,19 +459,6 @@ function RenderEffectToggle({ effect }: { effect: (typeof RENDER_EFFECTS)[number
       description={effect.description}
       checked={!disabled}
       onCheckedChange={(checked) => setEffectDisabled(effect.id, !checked)}
-    />
-  );
-}
-
-/** Its own component so each row can hold its own subscription rather than one per item here. */
-function ToolbarItemToggle({ item }: { item: (typeof TOOLBAR_ITEMS)[number] }) {
-  const visible = useToolbarItemVisible(item.id);
-  return (
-    <SettingToggle
-      title={item.label}
-      description={item.description}
-      checked={visible}
-      onCheckedChange={(checked) => setToolbarItemVisible(item.id, checked)}
     />
   );
 }
@@ -636,6 +616,16 @@ export function SettingsPage({
   const [logOpening, setLogOpening] = useState(false);
   const [logError, setLogError] = useState<string | null>(null);
   const [miniPlayerResetting, setMiniPlayerResetting] = useState(false);
+  const [canPlaceWindows, setCanPlaceWindows] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void windowPlacementSupported().then((supported) => {
+      if (active) setCanPlaceWindows(supported);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
   const [resetSettingsConfirming, setResetSettingsConfirming] = useState(false);
   const [resetSettingsBusy, setResetSettingsBusy] = useState(false);
   const [resetSettingsError, setResetSettingsError] = useState<string | null>(null);
@@ -658,11 +648,9 @@ export function SettingsPage({
   const preferredLyricsSource = usePreferredLyricsSourceId();
   const lyricsFontScale = useLyricsFontScale();
   const lyricsTranslationLang = useLyricsTranslationLang();
-  const madeForYouVisible = useMadeForYouVisible();
   const crossfadeSec = useCrossfadeSec();
   const gaplessEnabled = useGaplessEnabled();
   const sessionRestoreEnabled = useSessionRestoreEnabled();
-  const extraPlayerControlsAlwaysVisible = useExtraPlayerControlsAlwaysVisible();
   const compactPlayerBar = useCompactPlayerBar();
   const nativeWindowControls = useNativeWindowControls();
   const forceWindowControls = useForceWindowControls();
@@ -1630,21 +1618,24 @@ export function SettingsPage({
                 </Select>
               )}
             </SettingRow>
-            <SettingRow
-              title="Mini-player position"
-              description="Move the mini-player back to the bottom center of this screen."
-            >
-              {() => (
-                <button
-                  className={BUTTON_SECONDARY}
-                  type="button"
-                  disabled={miniPlayerResetting}
-                  onClick={() => void handleResetMiniPlayerPosition()}
-                >
-                  {miniPlayerResetting ? "Resetting..." : "Reset position"}
-                </button>
-              )}
-            </SettingRow>
+            {/* Wayland leaves window placement to the desktop, so there is nothing to reset. */}
+            {canPlaceWindows && (
+              <SettingRow
+                title="Mini-player position"
+                description="Move the mini-player back to the bottom center of this screen."
+              >
+                {() => (
+                  <button
+                    className={BUTTON_SECONDARY}
+                    type="button"
+                    disabled={miniPlayerResetting}
+                    onClick={() => void handleResetMiniPlayerPosition()}
+                  >
+                    {miniPlayerResetting ? "Resetting..." : "Reset position"}
+                  </button>
+                )}
+              </SettingRow>
+            )}
           </SettingsSection>
 
           <SettingsSection id="behavior-settings-title" title="Player bar">
@@ -1653,32 +1644,6 @@ export function SettingsPage({
               description="Tuck the seek bar under the transport controls instead of spanning the full width."
               checked={compactPlayerBar}
               onCheckedChange={setCompactPlayerBar}
-            />
-
-            <SettingToggle
-              title="Always show extra controls"
-              description="Keep lyrics and queue visible instead of showing them only on hover."
-              checked={extraPlayerControlsAlwaysVisible}
-              onCheckedChange={setExtraPlayerControlsAlwaysVisible}
-            />
-          </SettingsSection>
-
-          <SettingsSection
-            id="toolbar-settings-title"
-            title="Title bar"
-            note="Which optional buttons sit next to the window controls."
-          >
-            {TOOLBAR_ITEMS.map((item) => (
-              <ToolbarItemToggle key={item.id} item={item} />
-            ))}
-          </SettingsSection>
-
-          <SettingsSection id="home-settings-title" title="Home">
-            <SettingToggle
-              title="Made for you"
-              description="The recommendation carousel at the top. Hiding it leaves the surprise button and More recommendations working."
-              checked={madeForYouVisible}
-              onCheckedChange={setMadeForYouVisible}
             />
           </SettingsSection>
 

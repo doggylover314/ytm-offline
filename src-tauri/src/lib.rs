@@ -3578,6 +3578,23 @@ async fn take_over_download(
     }
 }
 
+/// Whether the app can place its own windows. Under Wayland the compositor decides: moving a
+/// window, restoring where it was and keeping it on top are all ignored.
+#[tauri::command]
+fn window_placement_supported() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
+            || std::env::var("XDG_SESSION_TYPE").is_ok_and(|session| session == "wayland");
+        let forced_x11 = std::env::var("GDK_BACKEND").is_ok_and(|backend| backend.trim_start().starts_with("x11"));
+        !wayland || forced_x11
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
+}
+
 #[tauri::command]
 async fn offline_audio_save(
     app: tauri::AppHandle,
@@ -5373,6 +5390,7 @@ pub fn run() {
             fetch_audio_bytes,
             fetch_audio_source,
             offline_audio_save,
+            window_placement_supported,
             offline_audio_cancel,
             offline_artwork_save,
             offline_artwork_read,

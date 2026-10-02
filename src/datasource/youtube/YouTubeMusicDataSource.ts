@@ -30,7 +30,6 @@ import type {
   ArtistPage,
   ArtistReference,
   AuthPrompt,
-  FeedNotification,
   LibrarySnapshot,
   Lyrics,
   LyricsSourceAttempt,
@@ -6524,53 +6523,6 @@ export class YouTubeMusicDataSource extends DataSource {
   }
 
   /** The account's notification inbox, newest first. Empty when signed out. */
-  async getNotifications(): Promise<FeedNotification[]> {
-    if (!this.musicCookie) return [];
-
-    try {
-      const client = await this.getWebClient();
-      const menu = await client.getNotifications();
-      const notifications = (menu.contents ?? []).map((item) => {
-        const payload = item.endpoint?.payload as { videoId?: string } | undefined;
-        return {
-          id: item.notification_id,
-          text: item.short_message?.toString() ?? "",
-          sentAtText: item.sent_time?.toString() || undefined,
-          thumbnailUrl: selectArtworkUrl(
-            collectArtworkCandidates(item.video_thumbnails ?? item.thumbnails ?? []),
-          ),
-          videoId: payload?.videoId,
-          read: Boolean(item.read),
-        } satisfies FeedNotification;
-      }).filter((item) => item.text.length > 0);
-
-      logInternalInfo("YouTubeMusicDataSource.getNotifications", {
-        count: notifications.length,
-      });
-      return notifications;
-    } catch (error) {
-      logInternalWarn("YouTubeMusicDataSource.getNotifications unavailable", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return [];
-    }
-  }
-
-  async getUnseenNotificationCount(): Promise<number> {
-    if (!this.musicCookie) return 0;
-
-    try {
-      const client = await this.getWebClient();
-      const count = await client.getUnseenNotificationsCount();
-      return Number.isFinite(count) ? count : 0;
-    } catch (error) {
-      logInternalWarn("YouTubeMusicDataSource.getUnseenNotificationCount unavailable", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return 0;
-    }
-  }
-
   /**
    * A playlist's description text.
    *
