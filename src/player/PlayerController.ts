@@ -623,12 +623,11 @@ export class PlayerController {
   setShuffleEnabled(enabled: boolean): void {
     this.shuffleEnabled = enabled;
 
-    if (this.isPlaylistMode) {
-      if (!enabled) {
-        this.queue.restoreOriginalOrder(this.queue.queuedManually);
-      } else if (!this.queue.canRestoreOriginalOrder) {
-        this.queue.shuffleRemaining(this.queue.queuedManually);
-      }
+    // Any queue, not only a playlist's: a radio or an album's up-next used to ignore the button.
+    if (!enabled) {
+      this.queue.restoreOriginalOrder(this.queue.queuedManually);
+    } else if (!this.queue.canRestoreOriginalOrder) {
+      this.queue.shuffleRemaining(this.queue.queuedManually);
     }
 
     logInternalInfo("PlayerController.setShuffleEnabled", {
@@ -665,6 +664,7 @@ export class PlayerController {
       trackId: track.id,
       title: track.title,
     });
+    this.playIfIdle();
   }
 
   playNext(track: Track): void {
@@ -674,6 +674,17 @@ export class PlayerController {
       trackId: track.id,
       title: track.title,
     });
+    this.playIfIdle();
+  }
+
+  /*
+   * With nothing loaded, what was just queued is all there is to play. Leaving it in the queue
+   * looked like the button had done nothing, and Play then had no track to start.
+   */
+  private playIfIdle(): void {
+    if (this.state.currentTrack) return;
+    const first = this.queue.current;
+    if (first) void this.playTrackById(first.id);
   }
 
   removeFromQueueAt(index: number): void {
@@ -761,6 +772,7 @@ export class PlayerController {
     this.queue.addMany(tracks);
     this.emit();
     logInternalInfo("PlayerController.addTracksToQueue", { count: tracks.length });
+    this.playIfIdle();
   }
 
   /** Pass null to clear. Playback stops once the track at `index` finishes. */
@@ -826,9 +838,39 @@ export class PlayerController {
     });
   }
 
+  /**
+   * Back to the top of the queue under repeat-all, for a track that ended and for Next alike.
+   * Null when repeat-all is off or there is nothing to loop.
+   *
+   * Reshuffled on each lap when shuffle is on. Looping a shuffled queue back to index 0 would
+   * otherwise replay the same "random" order forever, which is the one thing a listener notices
+   * immediately and reads as shuffle being broken.
+   */
+  private wrapQueueForRepeatAll(): Track | null {
+    if (this.playbackOrderMode !== "repeat-all" || this.queue.all.length === 0) return null;
+    if (this.shuffleEnabled && this.isPlaylistMode) {
+      this.queue.shuffleForLoop();
+    } else {
+      this.queue.select(0);
+    }
+    return this.queue.current;
+  }
+
   private async skipToNextNow(): Promise<void> {
     const shouldResume = this.shouldResumeAfterNavigation();
     const nextTrack = this.queue.next(false);
+    // Next on the last song loops like the song ending would, instead of starting a radio.
+    if (!nextTrack || nextTrack.id === this.state.currentTrack?.id) {
+      const firstTrack = this.wrapQueueForRepeatAll();
+      if (firstTrack) {
+        if (shouldResume) {
+          await this.playTrackById(firstTrack.id);
+        } else {
+          await this.loadTrack(firstTrack);
+        }
+        return;
+      }
+    }
     if (
       (!nextTrack || nextTrack.id === this.state.currentTrack?.id)
       && this.state.currentTrack
@@ -1012,27 +1054,14 @@ export class PlayerController {
        * normally. Without this the queue falls through to recommendations and the album
        * quietly turns into a radio station.
        */
-      if (this.playbackOrderMode === "repeat-all" && this.queue.all.length > 0) {
-        /*
-         * Reshuffled on each lap when shuffle is on. Looping a shuffled queue back to index 0
-         * would otherwise replay the same "random" order forever, which is the one thing a
-         * listener notices immediately and reads as shuffle being broken.
-         */
-        if (this.shuffleEnabled && this.isPlaylistMode) {
-          this.queue.shuffleForLoop();
-        } else {
-          this.queue.select(0);
-        }
-
-        const firstTrack = this.queue.current;
-        if (firstTrack) {
-          logInternalInfo("PlayerController.handleTrackEnded looping queue", {
-            trackCount: this.queue.all.length,
-            reshuffled: this.shuffleEnabled && this.isPlaylistMode,
-          });
-          await this.playTrackById(firstTrack.id);
-          return;
-        }
+      const firstTrack = this.wrapQueueForRepeatAll();
+      if (firstTrack) {
+        logInternalInfo("PlayerController.handleTrackEnded looping queue", {
+          trackCount: this.queue.all.length,
+          reshuffled: this.shuffleEnabled && this.isPlaylistMode,
+        });
+        await this.playTrackById(firstTrack.id);
+        return;
       }
 
       const seed = this.state.currentTrack;

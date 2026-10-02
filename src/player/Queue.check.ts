@@ -99,4 +99,39 @@ equal(ids(withManual), "a,b,c,m1,d,e", "restoreOriginalOrder rebuilds the full p
 equal(withManual.currentIndex, 2, "restoreOriginalOrder puts the cursor back");
 equal(withManual.queuedManually, 1, "restoreOriginalOrder restores the manual count");
 
+// Shuffle off after some shuffled songs have played: the original order resumes from the song
+// playing now, every entry once, and Next goes to the song after it in the original order.
+const played = new Queue();
+const list = ["a", "b", "c", "d", "e", "f"].map(track);
+played.set([...list], 0);
+played.shuffleAll(0);
+played.next(false);
+played.next(false);
+const playing = played.current!;
+played.restoreOriginalOrder(played.queuedManually);
+equal(ids(played), "a,b,c,d,e,f", "shuffle off returns to the original order");
+equal(played.current, playing, "and keeps the song that is playing");
+equal(played.next(false)?.id, list[list.indexOf(playing) + 1]?.id, "Next continues the original order from it");
+
+const tail = new Queue();
+tail.set([...list], 0);
+tail.shuffleRemaining(0);
+tail.next(false);
+tail.next(false);
+const tailPlaying = tail.current!;
+tail.restoreOriginalOrder(tail.queuedManually);
+equal(ids(tail), "a,b,c,d,e,f", "an upcoming-only shuffle undoes without repeating played songs in the list");
+equal(tail.current, tailPlaying, "and keeps the song that is playing too");
+
+// Queued by hand after shuffling: stays right after the current song. Removed: stays removed.
+const edited = new Queue();
+edited.set([...list], 0);
+edited.shuffleAll(0);
+edited.add(track("m"));
+const removedAt = edited.all.findIndex((item) => item.id === "f");
+edited.removeAt(removedAt);
+edited.restoreOriginalOrder(edited.queuedManually);
+equal(ids(edited), "a,m,b,c,d,e", "a hand-queued song stays next and a removed one stays gone");
+equal(edited.queuedManually, 1, "and it still counts as hand-queued");
+
 console.log("Queue: ok");

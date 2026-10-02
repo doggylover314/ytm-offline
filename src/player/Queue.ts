@@ -2,14 +2,8 @@ import type { Track } from "../datasource/types";
 
 export class Queue {
   private items: Track[] = [];
-  /** Pre-shuffle order of the automatic tail, so shuffle mode can be undone. */
-  private originalUpcoming: Track[] | null = null;
-  /** Full pre-shuffle state, captured when the whole queue was shuffled rather than just the tail. */
-  private fullOriginalOrder: {
-    items: Track[];
-    index: number;
-    manualQueueLength: number;
-  } | null = null;
+  /** The queue as it was when shuffle was turned on, so turning it off can return to it. */
+  private originalOrder: Track[] | null = null;
   private index = -1;
   private manualQueueLength = 0;
 
@@ -33,13 +27,12 @@ export class Queue {
 
   /** True while an un-shuffle snapshot exists — the tail order differs from the source order. */
   get canRestoreOriginalOrder(): boolean {
-    return this.originalUpcoming !== null || this.fullOriginalOrder !== null;
+    return this.originalOrder !== null;
   }
 
   set(tracks: Track[], startIndex = 0, manualQueueLength = 0) {
     this.items = tracks;
-    this.originalUpcoming = null;
-    this.fullOriginalOrder = null;
+    this.originalOrder = null;
     this.index = tracks.length === 0
       ? -1
       : Math.min(Math.max(startIndex, 0), tracks.length - 1);
@@ -79,8 +72,7 @@ export class Queue {
       this.manualQueueLength,
       Math.max(0, index - this.index),
     );
-    this.originalUpcoming = null;
-    this.fullOriginalOrder = null;
+    this.originalOrder = null;
   }
 
   playNext(track: Track): void {
@@ -176,8 +168,7 @@ export class Queue {
       this.items = this.items.slice(0, this.index + 1);
     }
     this.manualQueueLength = 0;
-    this.originalUpcoming = null;
-    this.fullOriginalOrder = null;
+    this.originalOrder = null;
   }
 
   select(index: number): Track | null {
@@ -219,9 +210,7 @@ export class Queue {
     const upcoming = this.items.slice(manualQueueEnd);
     if (upcoming.length <= 1) return;
 
-    if (this.originalUpcoming === null) {
-      this.originalUpcoming = [...upcoming];
-    }
+    this.originalOrder ??= [...this.items];
 
     for (let i = upcoming.length - 1; i > 0; i -= 1) {
       const swapIndex = Math.floor(Math.random() * (i + 1));
@@ -247,13 +236,7 @@ export class Queue {
     ];
     if (pool.length === 0) return;
 
-    if (this.fullOriginalOrder === null && this.originalUpcoming === null) {
-      this.fullOriginalOrder = {
-        items: [...this.items],
-        index: this.index,
-        manualQueueLength: this.manualQueueLength,
-      };
-    }
+    this.originalOrder ??= [...this.items];
 
     for (let i = pool.length - 1; i > 0; i -= 1) {
       const swapIndex = Math.floor(Math.random() * (i + 1));
@@ -279,18 +262,36 @@ export class Queue {
     this.manualQueueLength = 0;
   }
 
+  /**
+   * Turns shuffle off: the original order resumes from the song playing now. Songs before it in
+   * that order become history, hand-queued songs stay right after it, songs removed since are
+   * left out and songs added since go at the end.
+   *
+   * This used to put back the whole queue as it stood when shuffle was turned on, cursor and all,
+   * so after a few songs the cursor pointed at a different song than the one playing and Next
+   * jumped back; restoring only the upcoming part brought back songs already played.
+   */
   restoreOriginalOrder(manualCount: number): void {
-    if (this.fullOriginalOrder) {
-      this.items = [...this.fullOriginalOrder.items];
-      this.index = this.fullOriginalOrder.index;
-      this.manualQueueLength = this.fullOriginalOrder.manualQueueLength;
-      this.originalUpcoming = null;
-      this.fullOriginalOrder = null;
-      return;
-    }
-    if (!this.originalUpcoming) return;
-    const manualQueueEnd = this.index + 1 + manualCount;
-    this.items = [...this.items.slice(0, manualQueueEnd), ...this.originalUpcoming];
-    this.originalUpcoming = null;
+    const original = this.originalOrder;
+    this.originalOrder = null;
+    if (!original || this.index < 0) return;
+
+    const current = this.items[this.index];
+    const manual = this.items.slice(this.index + 1, this.index + 1 + manualCount);
+    const remaining = new Set(this.items);
+    remaining.delete(current);
+    for (const track of manual) remaining.delete(track);
+
+    // The same entry where possible: one song can sit in a playlist twice.
+    let at = original.indexOf(current);
+    if (at < 0) at = original.findIndex((track) => track.id === current.id);
+    const keep = (tracks: Track[]) => tracks.filter((track) => remaining.has(track));
+    const before = at < 0 ? [] : keep(original.slice(0, at));
+    const after = keep(at < 0 ? original : original.slice(at + 1));
+    const added = this.items.filter((track) => remaining.has(track) && !original.includes(track));
+
+    this.items = [...before, current, ...manual, ...after, ...added];
+    this.index = before.length;
+    this.manualQueueLength = manual.length;
   }
 }
