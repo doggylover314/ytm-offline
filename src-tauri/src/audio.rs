@@ -746,6 +746,30 @@ fn run(
             engine.tick();
             next_tick = Instant::now() + TICK;
         }
+        engine.publish_deck_tracks();
+    }
+}
+
+/// The track each deck holds, published by the engine thread for others to ask about.
+static DECK_TRACKS: Mutex<[Option<String>; 2]> = Mutex::new([None, None]);
+
+/// Whether either deck holds `track_id`: playing it, paused on it, or cued up next.
+pub(crate) fn deck_holds(track_id: &str) -> bool {
+    DECK_TRACKS
+        .lock()
+        .map(|decks| decks.iter().any(|held| held.as_deref() == Some(track_id)))
+        .unwrap_or(false)
+}
+
+impl Engine {
+    fn publish_deck_tracks(&self) {
+        if let Ok(mut published) = DECK_TRACKS.lock() {
+            for (slot, deck) in published.iter_mut().zip(&self.decks) {
+                if slot.as_deref() != deck.track_id.as_deref() {
+                    slot.clone_from(&deck.track_id);
+                }
+            }
+        }
     }
 }
 

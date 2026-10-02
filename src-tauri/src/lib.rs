@@ -3586,6 +3586,16 @@ fn load_superseded(slot: Option<(usize, u64)>) -> bool {
     }
 }
 
+/*
+ * Whether a fill can stop: a newer load took its slot, and its track is in neither deck. The
+ * second half matters after a gapless handover. The song playing then came from the standby
+ * slot, the next preload takes that slot, and on the slot alone the song's own download was
+ * abandoned mid-song, leaving silence where the rest should have been.
+ */
+fn fill_abandoned(slot: Option<(usize, u64)>, track_id: &str) -> bool {
+    load_superseded(slot) && !audio::deck_holds(track_id)
+}
+
 /**
  * Smallest total worth splitting, and the floor on a range.
  *
@@ -4579,7 +4589,7 @@ async fn fill_media_buffer(
 
     // The wait for the permit above is where a superseded fill most likely spent its time —
     // recheck now, before spending a request on a track that moved on while this was queued.
-    if load_superseded(slot) {
+    if fill_abandoned(slot, &track_id) {
         eprintln!(
             "[internal][tauri][info] fill_media_buffer superseded before start track_id={}",
             track_id
@@ -4605,6 +4615,7 @@ async fn fill_media_buffer(
             let url = url.clone();
             let cookie = cookie.clone();
             let abandoned = Arc::clone(&buffer);
+            let track_id = track_id.clone();
             async move {
                 /*
                  * Checked here rather than between chunks because `buffered(1)` starts the next
@@ -4615,7 +4626,7 @@ async fn fill_media_buffer(
                  * one is still going only because nothing had told it to stop.
                  */
                 if abandoned.lock().map(|guard| guard.failed).unwrap_or(true)
-                    || load_superseded(slot)
+                    || fill_abandoned(slot, &track_id)
                 {
                     return Err((index, cache_error("fill abandoned")));
                 }
@@ -4632,7 +4643,7 @@ async fn fill_media_buffer(
                 for attempt in 0..PLAYBACK_RANGE_ATTEMPTS {
                     // Re-checked every attempt: a supersede mid-backoff must not spend the next
                     // request anyway, and this is what stops it doing that.
-                    if load_superseded(slot) {
+                    if fill_abandoned(slot, &track_id) {
                         return Err((index, cache_error("fill abandoned")));
                     }
                     if attempt > 0 {
@@ -4700,7 +4711,7 @@ async fn fill_media_buffer(
                 // Same reasoning, for the one case above cannot see: superseded rather than
                 // failed. The whole-file fallback below is the expensive part of this function —
                 // not worth starting for a track nobody is playing or preloading any more.
-                if load_superseded(slot) {
+                if fill_abandoned(slot, &track_id) {
                     eprintln!(
                         "[internal][tauri][info] fill_media_buffer superseded, skipping fallback track_id={}",
                         track_id
