@@ -5932,8 +5932,8 @@ export class YouTubeMusicDataSource extends DataSource {
     /* `params` is part of the key: mood categories all share one browseId, so keying on the
        id alone would serve the first mood opened for every mood thereafter. */
     const cacheKey = typeof surface === "string"
-      ? `youtube-music:browse:v2:${surface}`
-      : `youtube-music:browse:v2:id:${surface.browseId}:${surface.params ?? ""}`;
+      ? `youtube-music:browse:v3:${surface}`
+      : `youtube-music:browse:v3:id:${surface.browseId}:${surface.params ?? ""}`;
     const cached = await getCachedJson<BrowsePage>(cacheKey);
     if (cached?.shelves.length) {
       void this.refreshBrowsePage(surface, cacheKey).catch(() => {});
@@ -6360,6 +6360,11 @@ export class YouTubeMusicDataSource extends DataSource {
     };
 
     for (const item of this.collectMusicItems(node, BROWSE_ITEM_TYPES)) {
+      const show = this.toPodcastShow(item);
+      if (show) {
+        shelf.playlists.push(show);
+        continue;
+      }
       switch (item.item_type) {
         case "song":
         case "video": {
@@ -6386,8 +6391,54 @@ export class YouTubeMusicDataSource extends DataSource {
           break;
       }
     }
+    // Episodes are rows of their own kind with no item type, so the walk above never sees them.
+    shelf.tracks.push(...this.collectPodcastEpisodes(node));
 
     return shelf;
+  }
+
+  /*
+   * A podcast show. YouTube Music labels it a video, so it used to be tried as a song and
+   * dropped, which left Browse › Podcasts empty; it is really the playlist of its episodes, and
+   * its id says which: `MPSP` followed by the playlist's own id.
+   */
+  private toPodcastShow(item: MusicItem): Playlist | null {
+    const browseId = item.endpoint?.payload?.browseId ?? item.id;
+    const title = this.getTitle(item);
+    if (!browseId?.startsWith("MPSPPL") || !title) return null;
+    return {
+      id: `VL${browseId.slice("MPSP".length)}`,
+      title,
+      owner: item.subtitle?.toString() ?? "",
+      artworkUrl: this.getArtwork(item),
+    };
+  }
+
+  /** The podcast episodes under `root`, played by the video each one opens. */
+  private collectPodcastEpisodes(root: unknown): Track[] {
+    const tracks: Track[] = [];
+    const seen = new WeakSet<object>();
+    const visit = (value: unknown) => {
+      if (!value || typeof value !== "object" || seen.has(value)) return;
+      seen.add(value);
+      if (value instanceof YTNodes.MusicMultiRowListItem) {
+        const videoId = (value.on_tap?.payload as { videoId?: unknown } | undefined)?.videoId;
+        const title = value.title?.toString();
+        if (typeof videoId === "string" && isVideoId(videoId) && title) {
+          tracks.push({
+            id: videoId,
+            source: "youtube",
+            title,
+            artist: value.second_title?.toString() || "Podcast",
+            artworkUrl: this.getArtwork(value as unknown as MusicItem) ?? getVideoArtworkFallback(videoId),
+          });
+        }
+        return;
+      }
+      for (const child of Object.values(value)) visit(child);
+    };
+    visit(root);
+    return this.uniqueById(tracks);
   }
 
   /**
