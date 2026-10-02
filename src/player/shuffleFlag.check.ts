@@ -104,11 +104,19 @@ const sortedIds = (order: string) => order.split(",").sort().join(",");
   equal(ids(controller), "a,b,c,d,e,f", "disable rebuilds the original order");
 }
 
-// Non-playlist queues stay untouched by the toggle, as before.
+// A radio or other non-playlist queue shuffles too: the button used to change nothing there.
 {
-  const controller = make(true, false);
-  controller.setShuffleEnabled(true);
-  equal(ids(controller), "a,b,c,d,e,f", "single-track/radio mode ignores the shuffle toggle");
+  const controller = make(false, false);
+  check(
+    Array.from({ length: 10 }, () => {
+      controller.setShuffleEnabled(true);
+      const order = ids(controller);
+      controller.setShuffleEnabled(false);
+      equal(ids(controller), "a,b,c,d,e,f", "turning it off puts a radio queue back in order");
+      return order;
+    }).some((order) => order !== "a,b,c,d,e,f"),
+    "a radio queue's up next is reordered",
+  );
 }
 
 console.log("shuffleFlag: ok");

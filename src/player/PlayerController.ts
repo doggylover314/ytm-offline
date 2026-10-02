@@ -212,6 +212,8 @@ export class PlayerController {
   private scrobbleTimerId: number | null = null;
   private playbackSettingsTimerId: ReturnType<typeof setTimeout> | null = null;
   private transitioning = false;
+  /** Length of the crossfade under way, when shorter than the setting: see `onTransitionTick`. */
+  private transitionFadeSec: number | null = null;
 
   private state: PlayerState = {
     status: "idle",
@@ -1272,10 +1274,9 @@ export class PlayerController {
        * them. A zero-length fade is the gapless case and swaps in the same tick.
        */
       if (this.usesPreloadDeck(track) && this.audioEngine.hasPreloaded(track.id)) {
-        const swapped = await this.audioEngine.transitionToPreloaded(
-          track.id,
-          this.crossfadeSec * 1000,
-        );
+        const fadeSec = this.transitionFadeSec ?? this.crossfadeSec;
+        this.transitionFadeSec = null;
+        const swapped = await this.audioEngine.transitionToPreloaded(track.id, fadeSec * 1000);
         if (swapped) {
           this.loadedTrackId = track.id;
           this.pendingSeekTime = null;
@@ -1668,11 +1669,20 @@ export class PlayerController {
 
     if (this.crossfadeSec <= 0 || remaining > this.crossfadeSec) return;
     if (!this.audioEngine.hasPreloaded(next.id)) return;
+    // The queue ends after this song, so it plays out instead of fading into one that won't come.
+    if (this.stopAfterTrack && this.queue.current === this.stopAfterTrack) return;
 
+    /*
+     * Over the time actually left. The next song can finish preloading with less than a full
+     * crossfade to go, and at a faster speed the song runs out sooner than the clock: a fade of
+     * the full length then cut the outgoing song off at most of its volume.
+     */
+    this.transitionFadeSec = Math.min(this.crossfadeSec, remaining / Math.max(0.25, this.audioEngine.getPlaybackRate()));
     logInternalInfo("PlayerController.crossfade starting", {
       fromTrackId: this.state.currentTrack?.id ?? null,
       toTrackId: next.id,
       crossfadeSec: this.crossfadeSec,
+      fadeSec: Math.round(this.transitionFadeSec * 10) / 10,
     });
     this.transitioning = true;
     void this.handleTrackEnded().finally(() => {
