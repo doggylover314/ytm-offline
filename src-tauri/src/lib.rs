@@ -2258,9 +2258,27 @@ async fn remove_youtube_music_account(
     jar: tauri::State<'_, YoutubeCookieJar>,
     account_lock: tauri::State<'_, AccountStoreLock>,
     slot_id: String,
-) -> Result<Option<String>, CommandError> {
+) -> Result<RemovedAccount, CommandError> {
     eprintln!("[internal][tauri][info] remove_youtube_music_account slot={slot_id}");
-    remove_account_slot(&app, &account_lock, &jar, &slot_id)
+    let was_active = {
+        let _guard = account_lock.0.lock().map_err(|_| CommandError {
+            message: "account store lock unavailable".to_string(),
+        })?;
+        load_account_store(&app)?.active_slot_id.as_deref() == Some(slot_id.as_str())
+    };
+    let cookie = remove_account_slot(&app, &account_lock, &jar, &slot_id)?;
+    Ok(RemovedAccount { cookie, was_active })
+}
+
+/// What removing an account left. Whether it was the one in use is said outright: comparing
+/// cookies before and after could not tell, since the active account's cookie is rotated in the
+/// background, and removing another account then looked like a switch.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RemovedAccount {
+    /// The session in use now, if any account is left.
+    cookie: Option<String>,
+    was_active: bool,
 }
 
 /// Labels a stored account for the switcher UI. Best-effort from the caller's point of view —

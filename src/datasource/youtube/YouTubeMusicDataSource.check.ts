@@ -12,28 +12,23 @@ function check(condition: boolean, message: string): void {
   if (!condition) throw new Error(`FAILED: ${message}`);
 }
 
-// Removing an account that was not active must not disturb the current session at all.
+// Removing an account that was not active must not disturb the current session at all, even
+// when the active account's cookie was rotated in the meantime.
 check(
-  removeAccountOutcome("cookie-a", "cookie-a") === "unchanged",
-  "same cookie before and after means the removed account was not the active one",
+  removeAccountOutcome({ cookie: "cookie-a2", wasActive: false }) === "unchanged",
+  "removing another account changes nothing, whatever the cookie now reads",
 );
 
 // Removing the active account with another stored one falls back to it.
 check(
-  removeAccountOutcome("cookie-a", "cookie-b") === "switched",
-  "a different, non-null cookie afterward means another stored account took over",
+  removeAccountOutcome({ cookie: "cookie-b", wasActive: true }) === "switched",
+  "removing the active account switches to the one left",
 );
 
-// Removing the last account leaves nothing active.
+// Removing the last account signs out.
 check(
-  removeAccountOutcome("cookie-a", null) === "signed-out",
-  "no cookie afterward means that was the last stored account",
+  removeAccountOutcome({ cookie: null, wasActive: true }) === "signed-out",
+  "removing the only account signs out",
 );
 
-// Removing the only account while never having been signed in is still a no-op, not a crash.
-check(
-  removeAccountOutcome(null, null) === "unchanged",
-  "null before and after must not be read as switching to 'no one'",
-);
-
-console.log("YouTubeMusicDataSource.removeAccountOutcome: ok");
+console.log("removeAccountOutcome: ok");

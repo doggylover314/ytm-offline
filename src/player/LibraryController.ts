@@ -310,7 +310,14 @@ export class LibraryController {
     }
   }
 
+  /**
+   * Bumped by every sign-in, sign-out and account change. A library load started before one
+   * is stale: applied late, it showed the previous account's library under the new one.
+   */
+  private libraryGeneration = 0;
+
   async signIn(): Promise<void> {
+    this.libraryGeneration += 1;
     if (!this.dataSource.signIn) return;
     logInternalInfo("LibraryController.signIn start");
     this.activeAuthFlow = "sign-in";
@@ -382,6 +389,7 @@ export class LibraryController {
    * to fully signed out — the same fallback `removeGoogleAccount` uses for a specific account.
    */
   async signOut(): Promise<void> {
+    this.libraryGeneration += 1;
     try {
       const fellBackToAnotherAccount = await this.dataSource.signOut?.() ?? false;
       if (fellBackToAnotherAccount) {
@@ -421,6 +429,7 @@ export class LibraryController {
    */
   async selectAccount(id: string): Promise<void> {
     if (!this.dataSource.selectAccount) return;
+    this.libraryGeneration += 1;
     this.activeAuthFlow = "account-switch";
     this.setAuthStage("session");
     try {
@@ -448,6 +457,7 @@ export class LibraryController {
    */
   async switchGoogleAccount(id: string): Promise<void> {
     if (!this.dataSource.switchGoogleAccount) return;
+    this.libraryGeneration += 1;
     this.activeAuthFlow = "google-account-switch";
     this.setAuthStage("session");
     try {
@@ -472,6 +482,7 @@ export class LibraryController {
     try {
       const outcome = await this.dataSource.removeGoogleAccount(id);
       if (outcome === "unchanged") return;
+      this.libraryGeneration += 1;
       if (outcome === "signed-out") {
         this.setState({
           status: "signed-out",
@@ -492,6 +503,8 @@ export class LibraryController {
 
   async refresh(options: { suppressFailure?: boolean } = {}): Promise<void> {
     if (!this.dataSource.getLibrary) return;
+    const generation = this.libraryGeneration;
+    const stale = () => generation !== this.libraryGeneration;
     this.setState({ status: "loading", authPrompt: null, error: null });
     try {
       /*
@@ -502,16 +515,19 @@ export class LibraryController {
        */
       const library = await this.dataSource.getLibrary(
         (updatedLibrary) => {
+          if (stale()) return;
           this.setState({ status: "ready", library: updatedLibrary, authPrompt: null, error: null });
         },
         (error) => {
           // A background refresh, so there is no caller to throw to — this is the only way an
           // expired session behind a cache hit ever becomes visible.
-          if (error instanceof AuthExpiredError) this.markSessionExpired();
+          if (!stale() && error instanceof AuthExpiredError) this.markSessionExpired();
         },
       );
+      if (stale()) return;
       this.applyLibrary(library);
     } catch (error) {
+      if (stale()) return;
       if (error instanceof AuthExpiredError) {
         this.markSessionExpired();
         if (options.suppressFailure) throw error;

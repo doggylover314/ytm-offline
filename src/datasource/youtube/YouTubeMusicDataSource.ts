@@ -336,11 +336,10 @@ interface StoredGoogleAccount {
  * fallback account, or shows signed-out.
  */
 export function removeAccountOutcome(
-  previousCookie: string | null,
-  newActiveCookie: string | null,
+  removed: { cookie: string | null; wasActive: boolean },
 ): "unchanged" | "switched" | "signed-out" {
-  if (newActiveCookie === previousCookie) return "unchanged";
-  return newActiveCookie ? "switched" : "signed-out";
+  if (!removed.wasActive) return "unchanged";
+  return removed.cookie ? "switched" : "signed-out";
 }
 
 const BROWSE_ITEM_TYPES = new Set(["song", "video", "album", "playlist", "artist"]);
@@ -436,6 +435,8 @@ export class YouTubeMusicDataSource extends DataSource {
    */
   private preferredAccountKeyCache: string | null | undefined;
   private libraryRefreshPromise: Promise<LibrarySnapshot> | null = null;
+  /** Bumped whenever the account changes; a library loaded for an earlier one is discarded. */
+  private accountGeneration = 0;
   /** Playlist edits made here that YouTube's listing may not show yet; see `applyPlaylistEdits`. */
   private readonly pendingPlaylistEdits = new Map<string, PendingPlaylistEdit>();
   private readonly albumRefreshPromises = new Map<string, Promise<Track[]>>();
@@ -751,8 +752,11 @@ export class YouTubeMusicDataSource extends DataSource {
   }
 
   private resetMusicSessionSelection(): void {
-    // Edits laid over one account's library must not land on another's.
+    // Edits laid over one account's library must not land on another's, and a library still
+    // loading for the previous account must not be handed to the next one.
     this.pendingPlaylistEdits.clear();
+    this.libraryRefreshPromise = null;
+    this.accountGeneration += 1;
     // Signing out and back in may land on a different Google account entirely, where the old
     // preference would point at a channel that no longer exists.
     this.writePreferredAccountKey(null);
@@ -3210,15 +3214,17 @@ export class YouTubeMusicDataSource extends DataSource {
    */
   async removeGoogleAccount(id: string): Promise<"unchanged" | "switched" | "signed-out"> {
     logInternalInfo("YouTubeMusicDataSource.removeGoogleAccount start");
-    const previousCookie = this.musicCookie;
-    const newActiveCookie = await invoke<string | null>("remove_youtube_music_account", { slotId: id });
-    const outcome = removeAccountOutcome(previousCookie, newActiveCookie);
+    const removed = await invoke<{ cookie: string | null; wasActive: boolean }>(
+      "remove_youtube_music_account",
+      { slotId: id },
+    );
+    const outcome = removeAccountOutcome(removed);
     if (outcome === "unchanged") {
       logInternalInfo("YouTubeMusicDataSource.removeGoogleAccount unchanged");
       return outcome;
     }
 
-    this.musicCookie = newActiveCookie;
+    this.musicCookie = removed.cookie;
     this.resetMusicSessionSelection();
     this.resetMusicClients();
     try {
@@ -3284,13 +3290,19 @@ export class YouTubeMusicDataSource extends DataSource {
   }
 
   private async refreshLibrary(cacheKey: string): Promise<{ changed: boolean; value: LibrarySnapshot }> {
+    const generation = this.accountGeneration;
     if (!this.libraryRefreshPromise) {
-      this.libraryRefreshPromise = this.fetchLibraryFresh().finally(() => {
-        this.libraryRefreshPromise = null;
+      const refresh = this.fetchLibraryFresh().finally(() => {
+        if (this.libraryRefreshPromise === refresh) this.libraryRefreshPromise = null;
       });
+      this.libraryRefreshPromise = refresh;
     }
 
     const value = this.applyPendingPlaylistEdits(await this.libraryRefreshPromise);
+    // Loaded for an account that is no longer the one in use: neither stored nor shown.
+    if (generation !== this.accountGeneration) {
+      throw new Error("The account changed while the library was loading.");
+    }
     const changed = await setCachedJson(cacheKey, value);
     return { changed, value };
   }
