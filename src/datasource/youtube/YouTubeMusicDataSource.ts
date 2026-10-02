@@ -3410,6 +3410,34 @@ export class YouTubeMusicDataSource extends DataSource {
     return (await this.refreshAlbumTracks(album, cacheKey)).value;
   }
 
+  async getAlbum(albumId: string): Promise<Album> {
+    const client = await this.getMusicClient();
+    const page = await client.music.getAlbum(albumId);
+    type Runs = Array<{ text?: string; endpoint?: { payload?: { browseId?: string } } }>;
+    type Thumbnails = Array<{ url?: string; width?: number; height?: number }>;
+    // MusicResponsiveHeader today; MusicDetailHeader on older responses.
+    const header = page.header as {
+      title?: { toString(): string };
+      subtitle?: { toString(): string };
+      strapline_text_one?: { toString(): string; runs?: Runs };
+      author?: { name?: string; channel_id?: string };
+      thumbnail?: { contents?: Thumbnails } | null;
+      thumbnails?: Thumbnails;
+    } | undefined;
+    const subtitle = header?.subtitle?.toString() ?? "";
+    const artists = (header?.strapline_text_one?.runs ?? [])
+      .filter((run) => run.text && run.endpoint?.payload?.browseId?.startsWith("UC"))
+      .map((run) => ({ id: run.endpoint!.payload!.browseId!, name: run.text! }));
+    return {
+      id: albumId,
+      title: header?.title?.toString() || "Album",
+      artist: header?.strapline_text_one?.toString() || header?.author?.name || "",
+      artists: artists.length > 0 ? artists : undefined,
+      artworkUrl: selectArtworkUrl(header?.thumbnail?.contents, header?.thumbnails),
+      releaseType: /\bsingle\b/i.test(subtitle) ? "single" : /\bep\b/i.test(subtitle) ? "ep" : "album",
+    };
+  }
+
   async setAlbumSaved(album: Album, saved: boolean): Promise<void> {
     if (!this.musicCookie) {
       throw new Error("Sign in to YouTube Music to update your library.");
@@ -6331,6 +6359,12 @@ export class YouTubeMusicDataSource extends DataSource {
    */
   async resolveLink(url: string): Promise<ResolvedLink | null> {
     const local = parseYouTubeLink(url);
+    if (local?.kind === "album" && local.id.startsWith("OLAK5uy_")) {
+      // Album pages are browsed by their MPREb_ id; without one the songs still open as a list.
+      const browseId = await this.findAlbumBrowseId(local.id);
+      logInternalInfo("YouTubeMusicDataSource.resolveLink album playlist", { found: Boolean(browseId) });
+      return browseId ? { kind: "album", id: browseId } : { kind: "playlist", id: local.id };
+    }
     if (local) {
       logInternalInfo("YouTubeMusicDataSource.resolveLink parsed locally", { kind: local.kind });
       return local;
@@ -6353,6 +6387,21 @@ export class YouTubeMusicDataSource extends DataSource {
       return resolved;
     } catch (error) {
       logInternalWarn("YouTubeMusicDataSource.resolveLink failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  /** The album behind an `OLAK5uy_` playlist, which its own songs link back to. */
+  private async findAlbumBrowseId(playlistId: string): Promise<string | null> {
+    try {
+      const client = await this.getMusicClient();
+      const page = await client.music.getPlaylist(playlistId) as YouTubeMusicPlaylistPage;
+      const tracks = this.collectParsedPlaylistPageTracks(page, new Set());
+      return tracks.find((track) => track.albumId?.startsWith("MPREb_"))?.albumId ?? null;
+    } catch (error) {
+      logInternalWarn("YouTubeMusicDataSource.findAlbumBrowseId failed", {
         error: error instanceof Error ? error.message : String(error),
       });
       return null;

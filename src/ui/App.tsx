@@ -1035,19 +1035,10 @@ export default function App() {
     }
 
     if (resolved.kind === "album") {
-      /*
-       * The link carries an id and nothing else, so the header would read "Album" until the
-       * page loaded. Fetching the tracks first — a request the album view then serves from
-       * cache — supplies a real title and cover from the first row.
-       */
-      const stub: Album = { id: resolved.id, title: "Album", artist: "" };
-      const tracks = await libraryController.getAlbumTracks(stub).catch(() => [] as Track[]);
-      handleNavigateAlbum({
-        ...stub,
-        title: tracks[0]?.album ?? stub.title,
-        artist: tracks[0]?.artist ?? "",
-        artworkUrl: tracks[0]?.artworkUrl,
-      });
+      // A link carries only an id; the album's own header supplies its title, artist and cover.
+      const album = await libraryController.getAlbum(resolved.id)
+        .catch((): Album => ({ id: resolved.id, title: "Album", artist: "" }));
+      handleNavigateAlbum(album);
       return true;
     }
 

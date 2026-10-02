@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type MouseEvent, type PointerEvent, type ReactNode } from "react";
+import { useEffect, useState, useSyncExternalStore, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -85,6 +85,23 @@ export function TitleBar({
   onOpenSettings,
 }: TitleBarProps) {
   const appWindow = getCurrentWindow();
+  // Only for the button's name: the icon stays the same either way, as designed.
+  const [isMaximized, setIsMaximized] = useState(false);
+  useEffect(() => {
+    const currentWindow = getCurrentWindow();
+    let active = true;
+    const update = () => {
+      void currentWindow.isMaximized().then((maximized) => {
+        if (active) setIsMaximized(maximized);
+      }).catch(() => {});
+    };
+    update();
+    const stopListening = currentWindow.onResized(update);
+    return () => {
+      active = false;
+      void stopListening.then((stop) => stop());
+    };
+  }, []);
   const nativeWindowControls = useNativeWindowControls();
   const forceWindowControls = useForceWindowControls();
   // Tiling compositors manage windows themselves and draw nothing, so app-drawn buttons would
@@ -176,7 +193,7 @@ export function TitleBar({
             <button type="button" className={WINDOW_BUTTON} onClick={() => void handleMinimize()} aria-label="Minimize" title="Minimize">
               <MinimizeIcon size={16} />
             </button>
-            <button type="button" className={WINDOW_BUTTON} onClick={() => void handleToggleMaximize()} aria-label="Maximize" title="Maximize">
+            <button type="button" className={WINDOW_BUTTON} onClick={() => void handleToggleMaximize()} aria-label={isMaximized ? "Restore" : "Maximize"} title={isMaximized ? "Restore" : "Maximize"}>
               <MaximizeIcon size={16} />
             </button>
             <button type="button" className={WINDOW_BUTTON} onClick={handleClose} aria-label="Close" title="Close">

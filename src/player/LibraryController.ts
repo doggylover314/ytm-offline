@@ -592,6 +592,11 @@ export class LibraryController {
     return this.dataSource.getAlbumTracks(album, onUpdate);
   }
 
+  async getAlbum(albumId: string): Promise<Album> {
+    if (!this.dataSource.getAlbum) return { id: albumId, title: "Album", artist: "" };
+    return this.dataSource.getAlbum(albumId);
+  }
+
   async getArtist(
     artistId: string,
     onUpdate?: (artist: ArtistPage) => void,
