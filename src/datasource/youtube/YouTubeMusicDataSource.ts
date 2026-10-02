@@ -43,6 +43,7 @@ import type {
   TrackRating,
 } from "../types";
 import { collectArtworkCandidates, getVideoArtworkFallback, selectArtworkUrl } from "./artwork";
+import { applyPlaylistEdits, barePlaylistId, type PendingPlaylistEdit, type PlaylistEdit } from "./playlistEdits";
 import {
   isIncompleteLookup,
   LYRICS_SOURCES,
@@ -383,6 +384,8 @@ const ARTIST_CACHE_VERSION = "v9";
 const ARTIST_REFRESH_COOLDOWN_MS = 60_000;
 const ARTIST_SUBSCRIPTION_OVERRIDE_MS = 60_000;
 const PLAYLIST_PAGE_SESSION_TTL_MS = 10 * 60_000;
+/** How long an edit made here is laid over YouTube's own playlist listing, which lags it. */
+const PENDING_PLAYLIST_EDIT_MS = 10 * 60_000;
 const PLAYLIST_TRACK_CACHE_VERSION = "v6";
 const PLAYLIST_EMPTY_RETRY_DELAYS_MS = [0, 600, 1_500];
 
@@ -429,6 +432,8 @@ export class YouTubeMusicDataSource extends DataSource {
    */
   private preferredAccountKeyCache: string | null | undefined;
   private libraryRefreshPromise: Promise<LibrarySnapshot> | null = null;
+  /** Playlist edits made here that YouTube's listing may not show yet; see `applyPlaylistEdits`. */
+  private readonly pendingPlaylistEdits = new Map<string, PendingPlaylistEdit>();
   private readonly albumRefreshPromises = new Map<string, Promise<Track[]>>();
   private readonly playlistRefreshPromises = new Map<string, Promise<Track[]>>();
   private readonly playlistPageSessions = new Map<string, PlaylistPageSession>();
@@ -725,6 +730,8 @@ export class YouTubeMusicDataSource extends DataSource {
   }
 
   private resetMusicSessionSelection(): void {
+    // Edits laid over one account's library must not land on another's.
+    this.pendingPlaylistEdits.clear();
     // Signing out and back in may land on a different Google account entirely, where the old
     // preference would point at a channel that no longer exists.
     this.writePreferredAccountKey(null);
@@ -3262,9 +3269,28 @@ export class YouTubeMusicDataSource extends DataSource {
       });
     }
 
-    const value = await this.libraryRefreshPromise;
+    const value = this.applyPendingPlaylistEdits(await this.libraryRefreshPromise);
     const changed = await setCachedJson(cacheKey, value);
     return { changed, value };
+  }
+
+  /** Records an edit and writes it into the cached library, which a refresh returns first. */
+  private async recordPlaylistEdit(playlistId: string, edit: PlaylistEdit): Promise<void> {
+    this.pendingPlaylistEdits.set(barePlaylistId(playlistId), { edit, at: Date.now() });
+    const cached = await getCachedJson<LibrarySnapshot>(LIBRARY_CACHE_KEY);
+    if (cached) await setCachedJson(LIBRARY_CACHE_KEY, this.applyPendingPlaylistEdits(cached));
+  }
+
+  private applyPendingPlaylistEdits(library: LibrarySnapshot): LibrarySnapshot {
+    if (this.pendingPlaylistEdits.size === 0) return library;
+    const { playlists, settled } = applyPlaylistEdits(
+      library.playlists,
+      this.pendingPlaylistEdits,
+      Date.now(),
+      PENDING_PLAYLIST_EDIT_MS,
+    );
+    for (const id of settled) this.pendingPlaylistEdits.delete(id);
+    return { ...library, playlists };
   }
 
   private async fetchLibraryFresh(): Promise<LibrarySnapshot> {
@@ -4198,13 +4224,16 @@ export class YouTubeMusicDataSource extends DataSource {
       trackCount: trackIds.length,
     });
 
-    return {
-      id: result.playlist_id,
+    // The id the library listing uses, so the two are recognised as one playlist.
+    const playlist: Playlist = {
+      id: `VL${this.editablePlaylistId(result.playlist_id)}`,
       title,
       owner: this.musicAccountName,
       isEditable: true,
       isSaved: true,
     };
+    await this.recordPlaylistEdit(playlist.id, { kind: "created", playlist });
+    return playlist;
   }
 
   async renamePlaylist(playlist: Playlist, title: string): Promise<void> {
@@ -4214,6 +4243,7 @@ export class YouTubeMusicDataSource extends DataSource {
 
     const client = await this.getMusicClient();
     await client.playlist.setName(this.editablePlaylistId(playlist.id), title);
+    await this.recordPlaylistEdit(playlist.id, { kind: "renamed", title });
     logInternalInfo("YouTubeMusicDataSource.renamePlaylist", { playlistId: playlist.id });
   }
 
@@ -4231,6 +4261,7 @@ export class YouTubeMusicDataSource extends DataSource {
       throw new Error(`Playlist deletion returned HTTP ${response.status_code}.`);
     }
     await setCachedJson(this.getPlaylistTrackCacheKey(playlist.id), []);
+    await this.recordPlaylistEdit(playlist.id, { kind: "deleted" });
     logInternalInfo("YouTubeMusicDataSource.deletePlaylist", { playlistId });
   }
 
