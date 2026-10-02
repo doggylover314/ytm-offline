@@ -528,6 +528,9 @@ export class PlayerController {
       currentStatus: this.state.status,
       currentTrackId: this.state.currentTrack?.id ?? null,
     });
+    // A song loading starts playing by itself; pressing play again (a media key, the mini
+    // player) used to start a second load of it alongside the first.
+    if (this.state.status === "loading") return;
     try {
       let track = this.state.currentTrack;
       if (!track) {
