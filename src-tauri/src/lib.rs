@@ -5396,12 +5396,32 @@ async fn proxy_http_request(
     })
 }
 
+type DiscordManagerState = std::sync::Arc<std::sync::Mutex<discord_rpc::DiscordRpcManager>>;
+
+/*
+ * Discord's socket is plain blocking I/O. These ran on the main thread as synchronous commands,
+ * so a Discord that stopped answering froze the whole app; they now run on a worker. One at a
+ * time: if an earlier call is still stuck on Discord, the next is turned away rather than queued
+ * behind it, and the frontend retries later.
+ */
+async fn with_discord<T: Send + 'static>(
+    manager: DiscordManagerState,
+    action: impl FnOnce(&discord_rpc::DiscordRpcManager) -> Result<T, String> + Send + 'static,
+) -> Result<T, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager = manager
+            .try_lock()
+            .map_err(|_| "Discord is busy with an earlier update".to_string())?;
+        action(&manager)
+    })
+    .await
+    .map_err(|error| CommandError { message: format!("Discord update failed: {error}") })?
+    .map_err(|message| CommandError { message })
+}
+
 #[tauri::command]
-fn discord_rpc_update(
-    discord_manager: tauri::State<
-        '_,
-        std::sync::Arc<std::sync::Mutex<discord_rpc::DiscordRpcManager>>,
-    >,
+async fn discord_rpc_update(
+    discord_manager: tauri::State<'_, DiscordManagerState>,
     title: String,
     artist: String,
     album: String,
@@ -5425,39 +5445,12 @@ fn discord_rpc_update(
         current_time,
         is_playing,
     };
-
-    match discord_manager.lock() {
-        Ok(manager) => {
-            if let Err(e) = manager.update_presence(data) {
-                eprintln!("[internal][discord_rpc] failed to update presence: {}", e);
-                // Don't return error - Discord might not be running
-            }
-        }
-        Err(e) => {
-            eprintln!("[internal][discord_rpc] failed to lock manager: {}", e);
-        }
-    }
-    Ok(())
+    with_discord(discord_manager.inner().clone(), move |manager| manager.update_presence(data)).await
 }
 
 #[tauri::command]
-fn discord_rpc_clear(
-    discord_manager: tauri::State<
-        '_,
-        std::sync::Arc<std::sync::Mutex<discord_rpc::DiscordRpcManager>>,
-    >,
-) -> Result<(), CommandError> {
-    match discord_manager.lock() {
-        Ok(manager) => {
-            if let Err(e) = manager.clear_presence() {
-                eprintln!("[internal][discord_rpc] failed to clear presence: {}", e);
-            }
-        }
-        Err(e) => {
-            eprintln!("[internal][discord_rpc] failed to lock manager: {}", e);
-        }
-    }
-    Ok(())
+async fn discord_rpc_clear(discord_manager: tauri::State<'_, DiscordManagerState>) -> Result<(), CommandError> {
+    with_discord(discord_manager.inner().clone(), |manager| manager.clear_presence()).await
 }
 
 /// The compositor the app is running under, so the frontend can decide whether the

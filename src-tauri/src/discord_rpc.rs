@@ -163,12 +163,14 @@ impl DiscordRpcManager {
             "nonce": format!("jamc-{}-{}", std::process::id(), start_ts),
         });
 
+        // A failed send is an error the caller hears about, so it can try again later (Discord
+        // restarting is the usual cause), rather than a success nothing ever repeats.
         if let Err(e) = client.send(payload, 1) {
-            eprintln!("[Discord RPC] Failed to set activity: {}", e);
             *client_lock = None;
             if let Ok(mut connected) = self.connected.lock() {
                 *connected = false;
             }
+            return Err(format!("Failed to set activity: {e}"));
         }
 
         Ok(())
@@ -186,11 +188,11 @@ impl DiscordRpcManager {
             .ok_or("Discord client not initialized")?;
 
         if let Err(e) = client.clear_activity() {
-            eprintln!("[Discord RPC] Failed to clear activity: {}", e);
             *client_lock = None;
             if let Ok(mut connected) = self.connected.lock() {
                 *connected = false;
             }
+            return Err(format!("Failed to clear activity: {e}"));
         }
 
         Ok(())

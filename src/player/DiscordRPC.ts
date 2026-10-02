@@ -71,6 +71,31 @@ export function presenceDedupeKey(data: DiscordPresenceData): string {
   return JSON.stringify(rest);
 }
 
+/** A seek further than this from where Discord's clock says the song is gets sent. */
+const SEEK_TOLERANCE_SEC = 2;
+/** How often a presence that could not be delivered (Discord closed, say) is tried again. */
+const RETRY_MS = 15_000;
+
+export interface SentPresence {
+  key: string;
+  /** When the song started by the wall clock, in seconds; null while paused. */
+  startedAt: number | null;
+}
+
+/**
+ * Whether `next` differs from what Discord shows. Discord runs the clock itself from a start
+ * time, so the position only matters when it no longer agrees with that clock: after a seek.
+ */
+export function presenceNeedsSending(
+  sent: SentPresence | null,
+  next: DiscordPresenceData,
+  nowSec: number,
+): boolean {
+  if (!sent || sent.key !== presenceDedupeKey(next)) return true;
+  if (!next.isPlaying || sent.startedAt === null) return false;
+  return Math.abs(nowSec - next.currentTime - sent.startedAt) > SEEK_TOLERANCE_SEC;
+}
+
 function sanitizePresenceData(data: DiscordPresenceData): DiscordPresenceData {
   return {
     title: sanitizeDiscordText(data.title),
@@ -109,7 +134,31 @@ export class DiscordRpcService {
    * turns those into no-ops instead of a fresh IPC round trip (and a jittered progress bar) on
    * every unrelated change.
    */
-  private static lastSentKey: string | null = null;
+  private static lastSent: SentPresence | null = null;
+
+  /**
+   * What should be showing, kept so a send that failed can be repeated: Discord starting or
+   * restarting mid-song used to leave presence empty until the next song.
+   */
+  private static wanted: { data: DiscordPresenceData; at: number } | null = null;
+  private static retryTimer: number | null = null;
+
+  private static cancelRetry(): void {
+    if (this.retryTimer !== null) window.clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+  }
+
+  private static scheduleRetry(): void {
+    if (this.retryTimer !== null) return;
+    this.retryTimer = window.setTimeout(() => {
+      this.retryTimer = null;
+      const wanted = this.wanted;
+      if (!wanted || !this.isEnabled) return;
+      // Where the song is now, not where it was when the first attempt failed.
+      const elapsed = wanted.data.isPlaying ? (Date.now() - wanted.at) / 1000 : 0;
+      void this.updatePresence({ ...wanted.data, currentTime: wanted.data.currentTime + elapsed });
+    }, RETRY_MS);
+  }
 
   /**
    * Initialize Discord RPC
@@ -130,9 +179,11 @@ export class DiscordRpcService {
     setDiscordPresenceEnabled(enabled);
     if (enabled) return;
 
+    this.wanted = null;
+    this.cancelRetry();
     try {
       await invoke("discord_rpc_clear");
-      this.lastSentKey = null;
+      this.lastSent = null;
       logInternalDebug("Discord.setEnabled cleared presence", {});
     } catch (error) {
       logInternalWarn("Discord.setEnabled.clearFailed", error as Record<string, unknown>);
@@ -149,8 +200,9 @@ export class DiscordRpcService {
     }
 
     const safeData = sanitizePresenceData(data);
-    const nextKey = presenceDedupeKey(safeData);
-    if (nextKey === this.lastSentKey) return;
+    const nowSec = Date.now() / 1000;
+    this.wanted = { data: safeData, at: Date.now() };
+    if (!presenceNeedsSending(this.lastSent, safeData, nowSec)) return;
 
     try {
       logInternalDebug("Discord.updatePresence", {
@@ -173,10 +225,17 @@ export class DiscordRpcService {
         isPlaying: safeData.isPlaying,
       });
 
-      this.lastSentKey = nextKey;
+      this.lastSent = {
+        key: presenceDedupeKey(safeData),
+        startedAt: safeData.isPlaying ? nowSec - safeData.currentTime : null,
+      };
+      this.cancelRetry();
       logInternalDebug("Discord.updatePresence.success", {});
     } catch (error) {
-      logInternalWarn("Discord.updatePresence.failed", error as Record<string, unknown>);
+      // Not running, restarting or busy: nothing is showing, so it is tried again shortly.
+      this.lastSent = null;
+      this.scheduleRetry();
+      logInternalDebug("Discord.updatePresence.failed", { error: String((error as { message?: string })?.message ?? error) });
     }
   }
   /**
@@ -187,12 +246,14 @@ export class DiscordRpcService {
       return;
     }
 
+    this.wanted = null;
+    this.cancelRetry();
     try {
       logInternalDebug("Discord.clearPresence", {});
       await invoke("discord_rpc_clear");
       // The next real track has to go out even if it matches whatever was showing before
       // the clear.
-      this.lastSentKey = null;
+      this.lastSent = null;
       logInternalDebug("Discord.clearPresence.success", {});
     } catch (error) {
       logInternalWarn("Discord.clearPresence.failed", error as Record<string, unknown>);

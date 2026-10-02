@@ -8,7 +8,7 @@
  */
 export {};
 
-import { presenceDedupeKey, type DiscordPresenceData } from "./DiscordRPC";
+import { presenceDedupeKey, presenceNeedsSending, type DiscordPresenceData } from "./DiscordRPC";
 
 function check(condition: boolean, message: string): void {
   if (!condition) throw new Error(`FAILED: ${message}`);
@@ -38,5 +38,17 @@ check(
   presenceDedupeKey(base) !== presenceDedupeKey({ ...base, isPlaying: false }),
   "play/pause change is not deduped away",
 );
+
+// A seek has to be sent: Discord runs its own clock from the start time it was given.
+const NOW = 10_000;
+const sent = { key: presenceDedupeKey(base), startedAt: NOW - base.currentTime };
+check(!presenceNeedsSending(sent, { ...base, currentTime: base.currentTime + 1 }, NOW + 1), "playing on is not resent");
+check(presenceNeedsSending(sent, { ...base, currentTime: 120 }, NOW + 1), "a seek is resent");
+check(presenceNeedsSending(sent, { ...base, isPlaying: false }, NOW), "a pause is resent");
+check(
+  !presenceNeedsSending({ key: presenceDedupeKey({ ...base, isPlaying: false }), startedAt: null }, { ...base, isPlaying: false, currentTime: 50 }, NOW),
+  "a paused song is not resent as time passes",
+);
+check(presenceNeedsSending(null, base, NOW), "after a failed send, the same presence goes out again");
 
 console.log("DiscordRPC.check.ts passed");
