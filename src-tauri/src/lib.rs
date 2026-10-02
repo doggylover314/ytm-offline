@@ -22,6 +22,12 @@ macro_rules! eprintln {
     }};
 }
 
+/// Where the release build serves its pages. Fixed, because a page's stored data belongs to its
+/// address: a new port on every launch started the app with empty storage each time. The spares
+/// are for when another program holds the first, and are fixed for the same reason.
+#[cfg(not(debug_assertions))]
+const FRONTEND_PORTS: [u16; 4] = [41820, 41821, 41822, 41823];
+
 #[cfg(not(debug_assertions))]
 use tauri::utils::config::FrontendDist;
 #[cfg(not(debug_assertions))]
@@ -5214,7 +5220,11 @@ pub fn run() {
 
     #[cfg(not(debug_assertions))]
     {
-        let port = pick_unused_port().expect("failed to find an unused localhost port");
+        let port = FRONTEND_PORTS
+            .into_iter()
+            .find(|port| portpicker::is_free_tcp(*port))
+            .or_else(pick_unused_port)
+            .expect("failed to find an unused localhost port");
         let url: url::Url = format!("http://localhost:{}", port)
             .parse()
             .expect("failed to parse localhost url");

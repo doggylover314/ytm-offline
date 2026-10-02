@@ -38,6 +38,7 @@
         "bundleMediaFramework": true
       },
       "rpm": {
+        "epoch": 1,
         "depends": ["webkit2gtk4.1", "gtk3", "libayatana-appindicator-gtk3", "alsa-lib"],
         "recommends": ["gstreamer1-plugins-good", "gstreamer1-plugin-libav"]
       },
