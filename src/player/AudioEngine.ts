@@ -86,6 +86,7 @@ const STANDBY_IDLE_TEARDOWN_MS = 60_000;
 const FADE_STEP_MS = 20;
 
 let iframeApiPromise: Promise<void> | null = null;
+const IFRAME_API_TIMEOUT_MS = 20_000;
 const audioEngines = new Set<AudioEngine>();
 let playbackClaimId = 0;
 let playbackOwner: AudioEngine | null = null;
@@ -201,16 +202,29 @@ function loadYouTubeIframeApi(): Promise<void> {
   if (iframeApiPromise) return iframeApiPromise;
 
   iframeApiPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    /*
+     * A failed load is forgotten so the next play tries again. Kept, one failure (the app opened
+     * offline, say) left the YouTube player broken until a restart. A load that never reports
+     * ready gives up too, rather than leaving every play after it waiting forever.
+     */
+    const fail = () => {
+      window.clearTimeout(timer);
+      script.remove();
+      iframeApiPromise = null;
+      reject(new Error("Unable to load the YouTube player API."));
+    };
+    const timer = window.setTimeout(fail, IFRAME_API_TIMEOUT_MS);
     const previousReady = window.onYouTubeIframeAPIReady;
     window.onYouTubeIframeAPIReady = () => {
+      window.clearTimeout(timer);
       previousReady?.();
       resolve();
     };
 
-    const script = document.createElement("script");
     script.src = "https://www.youtube.com/iframe_api";
     script.async = true;
-    script.onerror = () => reject(new Error("Unable to load the YouTube player API."));
+    script.onerror = fail;
     document.head.appendChild(script);
   });
 

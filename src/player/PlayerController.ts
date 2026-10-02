@@ -8,6 +8,7 @@ import { NavigationCoalescer } from "./navigationCoalescer";
 import { recordPlay } from "./playHistory";
 import { computeQueueWindow } from "./queueWindow";
 import { getOfflineTrack, isTrackDownloaded } from "./offlineStore";
+import { isOnline } from "../internal/connectivity";
 import { hasPreloadDeck } from "./preloadDeck";
 import { getAudioEngineMode } from "../ui/settings/audioEngine";
 import { DiscordRpcService } from "./DiscordRPC";
@@ -843,6 +844,22 @@ export class PlayerController {
     });
   }
 
+  /*
+   * The next queue entry that can play right now. Offline that skips songs that are neither
+   * downloaded nor local files: reaching one used to stop playback mid-queue with an error
+   * rather than move on to the next song that could play. With none left the queue stays put.
+   */
+  private nextPlayableTrack(): Track | null {
+    const from = this.queue.currentIndex;
+    let next = this.queue.next(false);
+    if (isOnline()) return next;
+    while (next && next.source !== "local" && !isTrackDownloaded(next.id)) {
+      next = this.queue.next(false);
+    }
+    if (!next) this.queue.select(from);
+    return next;
+  }
+
   /**
    * Back to the top of the queue under repeat-all, for a track that ended and for Next alike.
    * Null when repeat-all is off or there is nothing to loop.
@@ -863,7 +880,7 @@ export class PlayerController {
 
   private async skipToNextNow(): Promise<void> {
     const shouldResume = this.shouldResumeAfterNavigation();
-    const nextTrack = this.queue.next(false);
+    const nextTrack = this.nextPlayableTrack();
     // Next on the last song loops like the song ending would, instead of starting a radio.
     if (!nextTrack || nextTrack.id === this.state.currentTrack?.id) {
       const firstTrack = this.wrapQueueForRepeatAll();
@@ -1045,7 +1062,7 @@ export class PlayerController {
         return;
       }
 
-      const nextTrack = this.queue.next(false);
+      const nextTrack = this.nextPlayableTrack();
 
       if (nextTrack && nextTrack.id !== this.state.currentTrack?.id) {
         this.refillAutomaticQueue();
