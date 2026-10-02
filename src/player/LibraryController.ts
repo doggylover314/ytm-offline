@@ -42,6 +42,7 @@ import {
   removeLocalPlaylistTrack,
   removeLocalTrackFromPlaylist,
 } from "./localPlaylists";
+import { restoreEntry } from "./libraryRevert";
 
 export type LibraryStatus = "restoring" | "signed-out" | "authorizing" | "loading" | "ready" | "error";
 
@@ -315,6 +316,17 @@ export class LibraryController {
    * is stale: applied late, it showed the previous account's library under the new one.
    */
   private libraryGeneration = 0;
+
+  /**
+   * Undoes one optimistic edit that failed, on the library as it is now. Putting back the whole
+   * library from before the edit also undid whatever landed meanwhile: other edits, a refresh,
+   * or after an account switch, the new account's library.
+   */
+  private revertEdit(generation: number, revert: (library: LibrarySnapshot) => LibrarySnapshot): void {
+    const library = this.state.library;
+    if (!library || generation !== this.libraryGeneration) return;
+    this.setState({ library: revert(library) });
+  }
 
   async signIn(): Promise<void> {
     this.libraryGeneration += 1;
@@ -683,6 +695,7 @@ export class LibraryController {
     }
 
     const previousLibrary = this.state.library;
+    const generation = this.libraryGeneration;
     const sameAlbum = (item: Album) =>
       item.id === album.id
       || Boolean(album.playlistId && item.playlistId === album.playlistId)
@@ -697,7 +710,10 @@ export class LibraryController {
       await this.dataSource.setAlbumSaved(album, saved);
       void this.refresh();
     } catch (error) {
-      this.setState({ library: previousLibrary });
+      this.revertEdit(generation, (library) => ({
+        ...library,
+        albums: restoreEntry(library.albums, previousLibrary.albums, sameAlbum, (item) => item.id),
+      }));
       throw error;
     }
   }
@@ -913,6 +929,7 @@ export class LibraryController {
     }
 
     const previousLibrary = this.state.library;
+    const generation = this.libraryGeneration;
     if (previousLibrary) {
       this.setState({
         library: {
@@ -927,7 +944,13 @@ export class LibraryController {
     try {
       await this.dataSource.renamePlaylist(playlist, trimmed);
     } catch (error) {
-      if (previousLibrary) this.setState({ library: previousLibrary });
+      // The title only, and only while it is still this edit's.
+      this.revertEdit(generation, (library) => ({
+        ...library,
+        playlists: library.playlists.map((item) =>
+          item.id === playlist.id && item.title === trimmed ? { ...item, title: playlist.title } : item,
+        ),
+      }));
       throw error;
     }
   }
@@ -951,6 +974,8 @@ export class LibraryController {
 
     const trimmed = description.trim();
     const previousLibrary = this.state.library;
+    const generation = this.libraryGeneration;
+    const previousDescription = previousLibrary?.playlists.find((item) => item.id === playlist.id)?.description;
     if (previousLibrary) {
       this.setState({
         library: {
@@ -965,7 +990,14 @@ export class LibraryController {
     try {
       await this.dataSource.setPlaylistDescription(playlist, trimmed);
     } catch (error) {
-      if (previousLibrary) this.setState({ library: previousLibrary });
+      this.revertEdit(generation, (library) => ({
+        ...library,
+        playlists: library.playlists.map((item) =>
+          item.id === playlist.id && item.description === trimmed
+            ? { ...item, description: previousDescription }
+            : item,
+        ),
+      }));
       throw error;
     }
   }
@@ -980,6 +1012,7 @@ export class LibraryController {
     }
 
     const previousLibrary = this.state.library;
+    const generation = this.libraryGeneration;
     if (previousLibrary) {
       this.setState({
         library: {
@@ -992,7 +1025,17 @@ export class LibraryController {
     try {
       await this.dataSource.deletePlaylist(playlist);
     } catch (error) {
-      if (previousLibrary) this.setState({ library: previousLibrary });
+      if (previousLibrary) {
+        this.revertEdit(generation, (library) => ({
+          ...library,
+          playlists: restoreEntry(
+            library.playlists,
+            previousLibrary.playlists,
+            (item) => item.id === playlist.id,
+            (item) => item.id,
+          ),
+        }));
+      }
       throw error;
     }
   }
@@ -1029,6 +1072,7 @@ export class LibraryController {
     }
 
     const previousLibrary = this.state.library;
+    const generation = this.libraryGeneration;
     const normalizedId = playlist.id.replace(/^VL/, "");
     const playlists = saved
       ? [
@@ -1046,7 +1090,15 @@ export class LibraryController {
       await this.dataSource.setPlaylistSaved(playlist, saved);
       void this.refresh();
     } catch (error) {
-      this.setState({ library: previousLibrary });
+      this.revertEdit(generation, (library) => ({
+        ...library,
+        playlists: restoreEntry(
+          library.playlists,
+          previousLibrary.playlists,
+          (item) => item.id.replace(/^VL/, "") === normalizedId,
+          (item) => item.id.replace(/^VL/, ""),
+        ),
+      }));
       throw error;
     }
   }
@@ -1091,7 +1143,8 @@ export class LibraryController {
     if (this.state.pendingLikeTrackIds.has(track.id)) return;
 
     const previousLibrary = this.state.library;
-    const previousDisliked = new Set(this.dislikedTrackIds);
+    const generation = this.libraryGeneration;
+    const wasDisliked = this.dislikedTrackIds.has(track.id);
     const pendingLikeTrackIds = new Set(this.state.pendingLikeTrackIds);
     pendingLikeTrackIds.add(track.id);
 
@@ -1115,9 +1168,21 @@ export class LibraryController {
     try {
       await applyRating(rating);
     } catch (error) {
-      this.setState({ library: previousLibrary });
-      this.dislikedTrackIds = previousDisliked;
-      this.persistDislikedTrackIds();
+      // This song's rating only: other songs rated meanwhile keep theirs.
+      this.revertEdit(generation, (library) => ({
+        ...library,
+        likedSongs: restoreEntry(
+          library.likedSongs,
+          previousLibrary.likedSongs,
+          (item) => item.id === track.id,
+          (item) => item.id,
+        ),
+      }));
+      if (generation === this.libraryGeneration) {
+        if (wasDisliked) this.dislikedTrackIds.add(track.id);
+        else this.dislikedTrackIds.delete(track.id);
+        this.persistDislikedTrackIds();
+      }
       throw error;
     } finally {
       const nextPending = new Set(this.state.pendingLikeTrackIds);
