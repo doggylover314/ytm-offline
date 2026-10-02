@@ -46,6 +46,8 @@ const win = getCurrentWindow();
 
 const RIGHT_MOUSE_BUTTON = 2;
 const LEFT_MOUSE_BUTTON = 0;
+/** How far the pointer moves on the artwork before a press becomes a drag rather than a click. */
+const DRAG_THRESHOLD_PX = 4;
 const INTERACTIVE_SELECTOR = "button, input, a, [role='button']";
 
 const MINI_BUTTON =
@@ -255,23 +257,36 @@ export default function MiniPlayer() {
   const handleAlbumArtMouseDown = async (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.currentTarget.blur();
+    // A new press: whatever the last gesture was, it no longer decides this one's click.
+    suppressNextAlbumArtClickRef.current = false;
 
     if (isLinux && event.button === LEFT_MOUSE_BUTTON) {
       event.stopPropagation();
-      suppressNextAlbumArtClickRef.current = true;
-      setIsDragging(true);
-
-      const stopNativeDrag = () => {
-        setIsDragging(false);
-        saveCurrentPositionSoon();
+      /*
+       * The system drag starts only once the pointer moves. Started on the press, it took the
+       * click with it, so clicking the artwork never brought the main window back on Linux.
+       */
+      const startX = event.screenX;
+      const startY = event.screenY;
+      const stopWatching = () => {
+        document.removeEventListener("mousemove", startDragOnMove);
+        document.removeEventListener("mouseup", stopWatching);
       };
-      document.addEventListener("mouseup", stopNativeDrag, { once: true });
-      window.addEventListener("blur", stopNativeDrag, { once: true });
-
-      try {
-        await win.startDragging();
-        saveCurrentPositionSoon();
-      } catch (_) {}
+      const startDragOnMove = (move: globalThis.MouseEvent) => {
+        if (Math.abs(move.screenX - startX) + Math.abs(move.screenY - startY) < DRAG_THRESHOLD_PX) return;
+        stopWatching();
+        suppressNextAlbumArtClickRef.current = true;
+        setIsDragging(true);
+        const stopNativeDrag = () => {
+          setIsDragging(false);
+          saveCurrentPositionSoon();
+        };
+        document.addEventListener("mouseup", stopNativeDrag, { once: true });
+        window.addEventListener("blur", stopNativeDrag, { once: true });
+        void win.startDragging().catch(() => {});
+      };
+      document.addEventListener("mousemove", startDragOnMove);
+      document.addEventListener("mouseup", stopWatching);
       return;
     }
 

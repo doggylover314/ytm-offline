@@ -1638,6 +1638,15 @@ useEffect(() => {
     window.addEventListener("pointercancel", handleMainWindowDragEnded);
     const unlistenRestoreMain = await listen("mini-player:restore-main", async () => {
       miniPlayerRestoreSuppressUntilRef.current = Date.now() + 800;
+      /*
+       * Brought back from here, the window that stays. The mini player used to do it after
+       * asking, but this handler destroys it, so its own show and focus raced its destruction
+       * and the main window could stay hidden.
+       */
+      const mainWindow = getCurrentWindow();
+      await mainWindow.show().catch(() => {});
+      await mainWindow.unminimize().catch(() => {});
+      await mainWindow.setFocus().catch(() => {});
       await dismissMiniPlayer();
     });
     const unlistenPositionChanged = await listen<{ x: number; y: number }>(
