@@ -1029,8 +1029,9 @@ export default function App() {
     }
 
     if (resolved.kind === "artist") {
-      const page = await libraryController.getArtist(resolved.id);
-      handleNavigateArtist(page.artist, openInNewTab);
+      // The page loads the artist itself, with its own placeholders and error message. Loading
+      // it here first showed nothing while it loaded, and nothing at all when it failed.
+      handleNavigateArtist({ id: resolved.id, name: "" }, openInNewTab);
       return true;
     }
 

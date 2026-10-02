@@ -4001,6 +4001,12 @@ export class YouTubeMusicDataSource extends DataSource {
           .filter((item): item is Playlist => Boolean(item)),
       );
     }
+    // A channel that does not exist, or is not an artist, comes back as a page with nothing on
+    // it. Shown, that was an empty page called "Artist" rather than an error.
+    const hasName = Boolean(header?.title?.toString() || artistItem?.title?.toString());
+    if (!hasName && popularSongs.length === 0 && releases.length === 0 && playlists.length === 0) {
+      throw new Error("YouTube Music has no artist page for this channel.");
+    }
 
     let allSongShelf: Awaited<ReturnType<typeof artistPage.getAllSongs>>;
     try {
