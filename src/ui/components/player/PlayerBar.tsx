@@ -1,12 +1,8 @@
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { SpinnerSteps } from "@/components/motion/loader";
-import { MiniPlayerIcon, PlayActiveIcon, QueuePanelActiveIcon, QueuePanelIcon } from "@/ui/icons";
+import { PlayActiveIcon, QueuePanelActiveIcon, QueuePanelIcon } from "@/ui/icons";
 import { checkConnectivity, useIsOnline } from "../../../internal/connectivity";
-import { usePlayerSelector } from "../../../player/playerStore";
-import { logInternalError } from "../../../internal/logging";
-import { useMiniPlayerEnabled } from "../../settings/miniPlayer";
 import { TrackInfo } from "./TrackInfo";
 import { PlaybackControls } from "./PlaybackControls";
 import { SeekBar } from "./SeekBar";
@@ -40,17 +36,6 @@ export function PlayerBar({ onToggleLyrics, onToggleQueue, isQueueOpen, handlePl
   };
 
   const compactPlayerBar = useCompactPlayerBar();
-  const miniPlayerEnabled = useMiniPlayerEnabled();
-  const hasTrack = usePlayerSelector((state) => state.currentTrack !== null);
-
-  // Minimising is what brings the mini player up (App listens for the minimise), so the
-  // button only exists while the mini player is switched on and has a song to show.
-  const openMiniPlayer = () => {
-    void getCurrentWindow().minimize().catch((error) => {
-      logInternalError("PlayerBar.openMiniPlayer failed", error);
-    });
-  };
-
   return (
     <>
       <AnimatePresence>
@@ -117,18 +102,6 @@ export function PlayerBar({ onToggleLyrics, onToggleQueue, isQueueOpen, handlePl
             <DownloadButton />
             <PlaybackOptions />
             <VolumeControl />
-
-            {miniPlayerEnabled && hasTrack && (
-              <button
-                type="button"
-                className={`${PLAYER_ICON_BUTTON} ml-1`}
-                onClick={openMiniPlayer}
-                aria-label="Open mini-player"
-                title="Open mini-player"
-              >
-                <MiniPlayerIcon size={20} />
-              </button>
-            )}
           </div>
         </div>
       </div>

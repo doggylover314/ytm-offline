@@ -20,7 +20,7 @@ export function VolumeControl() {
   const [volume, setVolume] = useState(() => playerController.getVolume());
   const [isMuted, setIsMuted] = useState(() => playerController.isMuted());
 
-  // The engine is the source of truth: the mini player and OS media keys change it too.
+  // The engine is the source of truth: the tray menu and OS media keys change it too.
   useEffect(() => {
     setVolume(playerState.volume);
     setIsMuted(playerState.muted);

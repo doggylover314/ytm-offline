@@ -20,7 +20,6 @@ export default defineConfig(async () => ({
     rollupOptions: {
       input: {
         main: resolveEntry("./index.html"),
-        mini: resolveEntry("./mini.html"),
       },
     },
   },

@@ -42,11 +42,8 @@ export function setPreferredLyricsSourceId(id: string): void {
 
 function subscribe(listener: () => void): () => void {
   window.addEventListener(CHANGE_EVENT, listener);
-  // Not optional in a multi-window app: without it the mini-player never sees the change.
-  window.addEventListener("storage", listener);
   return () => {
     window.removeEventListener(CHANGE_EVENT, listener);
-    window.removeEventListener("storage", listener);
   };
 }
 

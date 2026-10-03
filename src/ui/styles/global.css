@@ -8,9 +8,7 @@
  */
 /*
  * IBM Plex, self-hosted. Bundled rather than loaded from a CDN: this is an offline desktop
- * app, and a webfont request that fails leaves the UI on a fallback face. Imported here
- * rather than in the entry modules because main.tsx and mini.tsx both pull in this
- * stylesheet, so one import covers both windows.
+ * app, and a webfont request that fails leaves the UI on a fallback face.
  */
 @import "@fontsource/ibm-plex-sans/400.css";
 @import "@fontsource/ibm-plex-sans/500.css";
@@ -307,7 +305,7 @@ html[data-fx-off~="marquee"] .animate-marquee-vertical {
 }
 
 /*
- * Marquee, for titles too long for their column (TrackInfo, MiniPlayer).
+ * Marquee, for titles too long for their column (TrackInfo).
  *
  * These keyframes were missing entirely. Tailwind v4 resolves `animate-marquee` against a
  * `--animate-marquee` theme key, and with no key there is no utility — the class name landed

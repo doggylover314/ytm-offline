@@ -121,11 +121,8 @@ export function getPlayHistory(): PlayHistoryEntry[] {
 
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
-  // Another window (the mini player) writes to the same key.
-  window.addEventListener("storage", listener);
   return () => {
     listeners.delete(listener);
-    window.removeEventListener("storage", listener);
   };
 }
 

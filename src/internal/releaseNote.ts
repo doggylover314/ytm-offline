@@ -27,6 +27,7 @@ export const RELEASE_NOTE_BODY = `**Downloads** — playlists really download no
 **Offline** — downloaded songs play without a connection, and songs that aren't downloaded are skipped.
 **Updates** — a new version installs over the old one and keeps your downloads, sign-in, and settings.
 **Player** — playback speed, crossfade, shuffle, and repeat behave, and most songs have synced lyrics.
+**Tray** — closing the window keeps the music playing. Playback, volume, and Quit are in the tray icon's menu.
 
 Report anything broken at https://github.com/doggylover314/ytm-offline/issues.`;
 

@@ -47,14 +47,6 @@ function subscribe(callback: () => void) {
   };
 }
 
-// The mini-player window writes the same keys, so a cross-window change drops the cache too.
-if (typeof window !== "undefined") {
-  window.addEventListener("storage", () => {
-    cachedAuthenticatedStreaming = null;
-    cachedScrobbling = null;
-  });
-}
-
 /**
  * Whether *playback* resolves stream URLs with the session attached.
  *

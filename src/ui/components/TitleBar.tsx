@@ -120,7 +120,6 @@ export function TitleBar({
   // Empty bar space is the window's drag handle.
   const handlePointerDown = (event: PointerEvent<HTMLElement>) => {
     if (event.button !== 0 || isInteractiveTarget(event.target)) return;
-    window.dispatchEvent(new Event("main-window-drag-started"));
     void appWindow.startDragging();
   };
 
@@ -149,12 +148,12 @@ export function TitleBar({
     }
   };
 
-  // Goes through the backend so the close button and the OS close request share one path,
-  // including minimize-to-tray.
+  // Goes through the backend so the close button and the OS close request share one path:
+  // into the tray, or quitting where there is no tray.
   const handleClose = () => {
     logInternalInfo("TitleBar.close clicked");
-    void invoke("quit_app").catch((error) => {
-      logInternalError("TitleBar.close quit_app failed", error);
+    void invoke("close_main_window").catch((error) => {
+      logInternalError("TitleBar.close close_main_window failed", error);
       logInternalWarn("TitleBar.close fallback to appWindow.close");
       void appWindow.close();
     });

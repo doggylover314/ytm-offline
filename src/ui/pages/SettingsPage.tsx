@@ -103,19 +103,9 @@ import {
   useNativeWindowControls,
 } from "../settings/windowControls";
 import {
-  resetMiniPlayerPosition,
-  windowPlacementSupported,
-  setMiniPlayerEnabled,
-  setMiniPlayerHoverAction,
-  useMiniPlayerEnabled,
-  useMiniPlayerHoverAction,
-  type MiniPlayerHoverAction,
-} from "../settings/miniPlayer";
-import {
   setMainWindowGeometryPersistenceEnabled,
   useMainWindowGeometryPersistenceEnabled,
 } from "../settings/mainWindowGeometry";
-import { setMinimizeToTray, useMinimizeToTray } from "../settings/tray";
 import {
   setLinuxMediaSession,
   useLinuxMediaSession,
@@ -615,17 +605,6 @@ export function SettingsPage({
   const [autostartError, setAutostartError] = useState<string | null>(null);
   const [logOpening, setLogOpening] = useState(false);
   const [logError, setLogError] = useState<string | null>(null);
-  const [miniPlayerResetting, setMiniPlayerResetting] = useState(false);
-  const [canPlaceWindows, setCanPlaceWindows] = useState(false);
-  useEffect(() => {
-    let active = true;
-    void windowPlacementSupported().then((supported) => {
-      if (active) setCanPlaceWindows(supported);
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
   const [isConfirmingDeleteAll, setIsConfirmingDeleteAll] = useState(false);
   const [resetSettingsBusy, setResetSettingsBusy] = useState(false);
   const [resetSettingsError, setResetSettingsError] = useState<string | null>(null);
@@ -641,8 +620,6 @@ export function SettingsPage({
   const [activeTab, setActiveTab] = useState<SettingsTab>("account");
   const [listeningShortcut, setListeningShortcut] = useState<KeyboardShortcutAction | null>(null);
   const keyboardShortcuts = useKeyboardShortcuts();
-  const miniPlayerEnabled = useMiniPlayerEnabled();
-  const miniPlayerHoverAction = useMiniPlayerHoverAction();
   const audioEngineMode = useAudioEngineMode();
   const authenticatedStreaming = useAuthenticatedStreaming();
   const youtubeScrobbling = useYouTubeScrobbling();
@@ -669,7 +646,6 @@ export function SettingsPage({
     if (isLinux) void relaunch().catch(() => window.location.reload());
   };
   const mainWindowGeometryPersistenceEnabled = useMainWindowGeometryPersistenceEnabled();
-  const minimizeToTray = useMinimizeToTray();
   const linuxMediaSession = useLinuxMediaSession();
   const offlineState = useOfflineState();
   const streamingQuality = useStreamingQuality();
@@ -794,15 +770,6 @@ export function SettingsPage({
       setLogError("Unable to open the log file.");
     } finally {
       setLogOpening(false);
-    }
-  };
-
-  const handleResetMiniPlayerPosition = async () => {
-    setMiniPlayerResetting(true);
-    try {
-      await resetMiniPlayerPosition();
-    } finally {
-      setMiniPlayerResetting(false);
     }
   };
 
@@ -1581,51 +1548,6 @@ export function SettingsPage({
         <>
           <SettingsSection id="accent-settings-title" title="Appearance" first>
             <AccentColorSetting />
-            <SettingToggle
-              title="Mini-player"
-              description="Show small controls when you switch away from the app while a song is loaded. Turning this off closes its window and frees its memory."
-              checked={miniPlayerEnabled}
-              onCheckedChange={setMiniPlayerEnabled}
-            />
-            <SettingRow
-              title="Mini-player hover bar"
-              description="Choose what the expanded hover slider controls."
-            >
-              {() => (
-                <Select
-                  className="w-44"
-                  value={miniPlayerHoverAction}
-                  onValueChange={(value) =>
-                    setMiniPlayerHoverAction(value as MiniPlayerHoverAction)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="seek">Song position</SelectItem>
-                    <SelectItem value="volume">Volume</SelectItem>
-                  </SelectContent>
-                </Select>
-              )}
-            </SettingRow>
-            {/* Wayland leaves window placement to the desktop, so there is nothing to reset. */}
-            {canPlaceWindows && (
-              <SettingRow
-                title="Mini-player position"
-                description="Move the mini-player back to the bottom center of this screen."
-              >
-                {() => (
-                  <button
-                    className={BUTTON_SECONDARY}
-                    type="button"
-                    disabled={miniPlayerResetting}
-                    onClick={() => void handleResetMiniPlayerPosition()}
-                  >
-                    {miniPlayerResetting ? "Resetting..." : "Reset position"}
-                  </button>
-                )}
-              </SettingRow>
-            )}
           </SettingsSection>
 
           <SettingsSection id="behavior-settings-title" title="Player bar">
@@ -1711,12 +1633,6 @@ export function SettingsPage({
               below={autostartError && <p className={ROW_ERROR}>{autostartError}</p>}
             />
 
-            <SettingToggle
-              title="Minimize to tray"
-              description="Closing the window hides YTM Offline to the system tray and keeps playing. Quit from the tray icon."
-              checked={minimizeToTray}
-              onCheckedChange={setMinimizeToTray}
-            />
           </SettingsSection>
         </>
       )}

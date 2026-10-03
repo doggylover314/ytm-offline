@@ -276,12 +276,6 @@ export const MoreIcon: IconComponent = (props) => (
     <rect x="10.75" y="17" width="2.5" height="2.5" rx="0.5" fill="currentColor" />
   </Svg>
 );
-export const MiniPlayerIcon: IconComponent = (props) => (
-  <Svg {...props}>
-    <rect x="3.5" y="5" width="17" height="14" rx="2" />
-    <rect x="11.5" y="12" width="7" height="5" rx="1" fill="currentColor" stroke="none" />
-  </Svg>
-);
 export const MinimizeIcon = line("M6 12h12");
 export const MaximizeIcon: IconComponent = (props) => (
   <Svg {...props}>

@@ -1630,17 +1630,6 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
-/// Key written by the frontend's durable settings layer. Read here rather than pushed from
-/// JS so the close handler answers correctly even before the webview has finished booting.
-const MINIMIZE_TO_TRAY_SETTING: &str = "minimize-to-tray";
-
-fn minimize_to_tray_enabled(app: &tauri::AppHandle) -> bool {
-    read_app_settings(app)
-        .ok()
-        .and_then(|settings| settings.get(MINIMIZE_TO_TRAY_SETTING).and_then(|v| v.as_bool()))
-        .unwrap_or(false)
-}
-
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -1649,29 +1638,219 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
-/// Hides to the tray when the user asked for that, otherwise exits.
+/// Whether a tray icon is actually on screen. GNOME shows one only with the AppIndicator
+/// extension; without a tray host the icon is built but never drawn.
+#[cfg(target_os = "linux")]
+fn tray_host_present() -> bool {
+    use dbus::blocking::Connection;
+    let Ok(connection) = Connection::new_session() else {
+        return false;
+    };
+    let proxy = connection.with_proxy(
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        Duration::from_millis(500),
+    );
+    let reply: Result<(bool,), dbus::Error> = proxy.method_call(
+        "org.freedesktop.DBus",
+        "NameHasOwner",
+        ("org.kde.StatusNotifierWatcher",),
+    );
+    reply.map(|(owned,)| owned).unwrap_or(false)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn tray_host_present() -> bool {
+    true
+}
+
+/// Closing hides the window and keeps playing in the tray. It quits only when there is no tray
+/// to hide to: a hidden window without a tray icon would leave nothing to bring it back or to
+/// quit from.
 ///
 /// Both the titlebar close button and the OS close request come through here so they cannot
-/// disagree — a window that vanishes from one and quits from the other is the classic
-/// minimize-to-tray bug.
+/// disagree.
 fn close_or_hide_main_window(app: &tauri::AppHandle) {
-    if minimize_to_tray_enabled(app) {
+    if app.try_state::<TrayMenu>().is_some() && tray_host_present() {
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.hide();
         }
         eprintln!("[internal][tauri][info] main window hidden to tray");
         return;
     }
+    eprintln!("[internal][tauri][info] no tray to hide to, quitting");
     app.exit(0);
 }
 
+/// Playback as the tray menu shows it, sent by the frontend whenever it changes.
+#[derive(Deserialize, Clone, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct TrayPlayerState {
+    title: Option<String>,
+    artist: Option<String>,
+    /// The player's status: idle, loading, playing, paused or error.
+    status: String,
+    volume: f64,
+    muted: bool,
+}
+
+/// Volume levels offered in the tray, in percent. A menu cannot hold a slider.
+const TRAY_VOLUME_LEVELS: [u8; 4] = [100, 75, 50, 25];
+/// Cut separately, so a long title cannot push the artist out of the menu.
+const TRAY_TITLE_MAX_CHARS: usize = 40;
+const TRAY_ARTIST_MAX_CHARS: usize = 28;
+
+/// The tray menu items that follow playback, kept to relabel them as it changes.
+struct TrayMenu {
+    now_playing: tauri::menu::MenuItem<tauri::Wry>,
+    play_pause: tauri::menu::MenuItem<tauri::Wry>,
+    previous: tauri::menu::MenuItem<tauri::Wry>,
+    next: tauri::menu::MenuItem<tauri::Wry>,
+    seek_back: tauri::menu::MenuItem<tauri::Wry>,
+    seek_forward: tauri::menu::MenuItem<tauri::Wry>,
+    mute: tauri::menu::CheckMenuItem<tauri::Wry>,
+    levels: Vec<(u8, tauri::menu::CheckMenuItem<tauri::Wry>)>,
+    /// What the frontend last sent. Put back after every click, because GTK ticks a check item
+    /// the moment it is clicked, before the player has done anything.
+    last: Mutex<TrayPlayerState>,
+}
+
+/// Text shown as is: in menu labels a lone `&` marks a keyboard mnemonic and disappears.
+fn menu_label(text: &str) -> String {
+    text.replace('&', "&&")
+}
+
+fn truncate_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let kept: String = text.chars().take(max.saturating_sub(1)).collect();
+    format!("{}…", kept.trim_end())
+}
+
+/// "Title — Artist", or "Nothing playing".
+fn tray_now_playing_label(state: &TrayPlayerState) -> String {
+    let title = state.title.as_deref().map(str::trim).filter(|title| !title.is_empty());
+    let Some(title) = title else {
+        return "Nothing playing".to_string();
+    };
+    let title = truncate_chars(title, TRAY_TITLE_MAX_CHARS);
+    let text = match state.artist.as_deref().map(str::trim).filter(|artist| !artist.is_empty()) {
+        Some(artist) => format!("{title} — {}", truncate_chars(artist, TRAY_ARTIST_MAX_CHARS)),
+        None => title,
+    };
+    menu_label(&text)
+}
+
+fn tray_volume_percent(volume: f64) -> u8 {
+    if !volume.is_finite() {
+        return 0;
+    }
+    (volume.clamp(0.0, 1.0) * 100.0).round() as u8
+}
+
+fn apply_tray_state(menu: &TrayMenu, state: &TrayPlayerState) -> tauri::Result<()> {
+    let has_track = state.title.as_deref().is_some_and(|title| !title.trim().is_empty());
+    menu.now_playing.set_text(tray_now_playing_label(state))?;
+    // A song that is loading starts playing by itself, so it is already "playing" here.
+    let playing = matches!(state.status.as_str(), "playing" | "loading");
+    menu.play_pause.set_text(if playing { "Pause" } else { "Play" })?;
+    for item in [
+        &menu.play_pause,
+        &menu.previous,
+        &menu.next,
+        &menu.seek_back,
+        &menu.seek_forward,
+    ] {
+        item.set_enabled(has_track)?;
+    }
+    // The level is shown by its tick, not in the submenu's title: on Linux a submenu keeps
+    // the title it was built with.
+    let percent = tray_volume_percent(state.volume);
+    menu.mute.set_checked(state.muted)?;
+    for (level, item) in &menu.levels {
+        item.set_checked(!state.muted && *level == percent)?;
+    }
+    Ok(())
+}
+
+/// What a tray menu item asks the player to do, as the frontend's `tray-action` payload.
+fn tray_action(id: &str) -> Option<serde_json::Value> {
+    let action = match id {
+        "tray-play-pause" => "playPause",
+        "tray-previous" => "previous",
+        "tray-next" => "next",
+        "tray-seek-back" => "seekBack",
+        "tray-seek-forward" => "seekForward",
+        "tray-mute" => "toggleMute",
+        _ => {
+            let level: u8 = id.strip_prefix("tray-volume-")?.parse().ok()?;
+            if !TRAY_VOLUME_LEVELS.contains(&level) {
+                return None;
+            }
+            return Some(serde_json::json!({
+                "action": "volume",
+                "volume": f64::from(level) / 100.0,
+            }));
+        }
+    };
+    Some(serde_json::json!({ "action": action }))
+}
+
 fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
-    use tauri::menu::{Menu, MenuItem};
+    use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
     use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 
-    let show = MenuItem::with_id(app, "tray-show", "Show YTM Offline", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "tray-quit", "Quit YTM Offline", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &quit])?;
+    let item = |id: &str, text: &str, enabled: bool| {
+        MenuItem::with_id(app, id, text, enabled, None::<&str>)
+    };
+    // Disabled until the frontend says a song is loaded.
+    let now_playing = item("tray-now-playing", "Nothing playing", false)?;
+    let play_pause = item("tray-play-pause", "Play", false)?;
+    let previous = item("tray-previous", "Previous", false)?;
+    let next = item("tray-next", "Next", false)?;
+    let seek_back = item("tray-seek-back", "Back 10 seconds", false)?;
+    let seek_forward = item("tray-seek-forward", "Forward 10 seconds", false)?;
+    let show = item("tray-show", "Show YTM Offline", true)?;
+    let quit = item("tray-quit", "Quit YTM Offline", true)?;
+
+    let mute = CheckMenuItem::with_id(app, "tray-mute", "Mute", true, false, None::<&str>)?;
+    let levels = TRAY_VOLUME_LEVELS
+        .iter()
+        .map(|level| {
+            CheckMenuItem::with_id(
+                app,
+                format!("tray-volume-{level}"),
+                format!("{level}%"),
+                true,
+                false,
+                None::<&str>,
+            )
+            .map(|item| (*level, item))
+        })
+        .collect::<tauri::Result<Vec<_>>>()?;
+    let volume_separator = PredefinedMenuItem::separator(app)?;
+    let mut volume_items: Vec<&dyn IsMenuItem<tauri::Wry>> = vec![&mute, &volume_separator];
+    volume_items.extend(levels.iter().map(|(_, item)| item as &dyn IsMenuItem<tauri::Wry>));
+    let volume = Submenu::with_items(app, "Volume", true, &volume_items)?;
+
+    let menu = Menu::with_items(
+        app,
+        &[
+            &now_playing,
+            &PredefinedMenuItem::separator(app)?,
+            &play_pause,
+            &previous,
+            &next,
+            &seek_back,
+            &seek_forward,
+            &PredefinedMenuItem::separator(app)?,
+            &volume,
+            &PredefinedMenuItem::separator(app)?,
+            &show,
+            &quit,
+        ],
+    )?;
 
     TrayIconBuilder::with_id("main-tray")
         .icon(app.default_window_icon().cloned().ok_or_else(|| {
@@ -1679,13 +1858,22 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         })?)
         .tooltip("YTM Offline")
         .menu(&menu)
-        // The menu is for the right-click; a left click should just bring the window back.
+        // Where the desktop reports clicks on the icon, a left click brings the window back
+        // and the menu is on the right click. Linux trays open the menu on either.
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "tray-show" => show_main_window(app),
-            // The only path that always exits, whatever the setting says.
+            // The only way to quit, now that closing keeps the app in the tray.
             "tray-quit" => app.exit(0),
-            _ => {}
+            id => {
+                if let Some(action) = tray_action(id) {
+                    let _ = app.emit("tray-action", action);
+                }
+                if let Some(menu) = app.try_state::<TrayMenu>() {
+                    let last = menu.last.lock().map(|last| last.clone()).unwrap_or_default();
+                    let _ = apply_tray_state(&menu, &last);
+                }
+            }
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click { button, button_state, .. } = event {
@@ -1697,12 +1885,44 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             }
         })
         .build(app)?;
+
+    app.manage(TrayMenu {
+        now_playing,
+        play_pause,
+        previous,
+        next,
+        seek_back,
+        seek_forward,
+        mute,
+        levels,
+        last: Mutex::new(TrayPlayerState::default()),
+    });
     Ok(())
 }
 
+/// Keeps the tray menu in step with the player.
 #[tauri::command]
-fn quit_app(app: tauri::AppHandle) {
-    eprintln!("[internal][tauri][info] quit_app invoked");
+fn tray_update(app: tauri::AppHandle, state: TrayPlayerState) {
+    let Some(menu) = app.try_state::<TrayMenu>() else {
+        return;
+    };
+    {
+        let Ok(mut last) = menu.last.lock() else {
+            return;
+        };
+        if *last == state {
+            return;
+        }
+        *last = state.clone();
+    }
+    if let Err(error) = apply_tray_state(&menu, &state) {
+        eprintln!("[internal][tauri][warn] tray update failed: {error}");
+    }
+}
+
+#[tauri::command]
+fn close_main_window(app: tauri::AppHandle) {
+    eprintln!("[internal][tauri][info] close_main_window invoked");
     close_or_hide_main_window(&app);
 }
 
@@ -3814,23 +4034,6 @@ async fn take_over_download(
     }
 }
 
-/// Whether the app can place its own windows. Under Wayland the compositor decides: moving a
-/// window, restoring where it was and keeping it on top are all ignored.
-#[tauri::command]
-fn window_placement_supported() -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
-            || std::env::var("XDG_SESSION_TYPE").is_ok_and(|session| session == "wayland");
-        let forced_x11 = std::env::var("GDK_BACKEND").is_ok_and(|backend| backend.trim_start().starts_with("x11"));
-        !wayland || forced_x11
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        true
-    }
-}
-
 #[tauri::command]
 async fn offline_audio_save(
     app: tauri::AppHandle,
@@ -5546,7 +5749,6 @@ pub fn run() {
             if let Err(error) = initialize_app_log(app.handle()) {
                 std::eprintln!("[internal][tauri][warn] {}", error.message);
             }
-            // Always built, so toggling the setting takes effect without a restart.
             if let Err(error) = build_tray(app.handle()) {
                 std::eprintln!("[internal][tauri][warn] tray unavailable: {error}");
             }
@@ -5563,53 +5765,13 @@ pub fn run() {
                     close_or_hide_main_window(window.app_handle());
                 }
             }
-            tauri::WindowEvent::Focused(false) => {
-                if window.label() == "main" {
-                    let app = window.app_handle().clone();
-                    thread::spawn(move || {
-                        thread::sleep(Duration::from_millis(100));
-
-                        let main = app.get_webview_window("main");
-
-                        if let Some(main) = &main {
-                            if let Ok(true) = main.is_focused() {
-                                return;
-                            }
-                        }
-
-                        if let Some(mini) = app.get_webview_window("mini-player") {
-                            if let Ok(true) = mini.is_focused() {
-                                return;
-                            }
-                        }
-
-                        // Minimising is an unambiguous "put this away" — the frontend shows the
-                        // mini player for it even while a recent window drag is suppressing the
-                        // ordinary blur signal.
-                        let minimized = main
-                            .as_ref()
-                            .and_then(|main| main.is_minimized().ok())
-                            .unwrap_or(false);
-                        if minimized {
-                            let _ = app.emit("main-window-minimized", ());
-                            return;
-                        }
-
-                        let _ = app.emit("main-window-backgrounded", ());
-                    });
-                }
-            }
-            tauri::WindowEvent::Focused(true) => {
-                if window.label() == "main" {
-                    let _ = window.app_handle().emit("window-focused", ());
-                }
-            }
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             greet,
             desktop_environment,
-            quit_app,
+            close_main_window,
+            tray_update,
             frontend_log,
             app_setting_get,
             app_setting_set,
@@ -5621,7 +5783,6 @@ pub fn run() {
             fetch_audio_bytes,
             fetch_audio_source,
             offline_audio_save,
-            window_placement_supported,
             app_data_delete_all,
             offline_audio_cancel,
             offline_artwork_save,
@@ -6559,5 +6720,88 @@ mod offline_location_tests {
         assert!(resolve_offline_target("relative/path").is_err());
         assert!(resolve_offline_target(root.join("nope").to_str().unwrap()).is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tray_tests {
+    use super::{menu_label, tray_action, tray_now_playing_label, tray_volume_percent, truncate_chars, TrayPlayerState};
+
+    fn playing(title: Option<&str>, artist: Option<&str>) -> TrayPlayerState {
+        TrayPlayerState {
+            title: title.map(str::to_string),
+            artist: artist.map(str::to_string),
+            status: "playing".to_string(),
+            volume: 1.0,
+            muted: false,
+        }
+    }
+
+    #[test]
+    fn now_playing_reads_title_and_artist() {
+        assert_eq!(tray_now_playing_label(&playing(Some("Let Down"), Some("Radiohead"))), "Let Down — Radiohead");
+        assert_eq!(tray_now_playing_label(&playing(Some("Let Down"), Some("  "))), "Let Down");
+        assert_eq!(tray_now_playing_label(&playing(None, Some("Radiohead"))), "Nothing playing");
+        assert_eq!(tray_now_playing_label(&playing(Some(" "), None)), "Nothing playing");
+    }
+
+    #[test]
+    fn a_long_title_leaves_room_for_the_artist() {
+        let label = tray_now_playing_label(&playing(
+            Some("Enderman Rap (feat. Rockit Gaming) (feat. Rockit Gaming)"),
+            Some("Dan Bull"),
+        ));
+        assert_eq!(label, "Enderman Rap (feat. Rockit Gaming) (fea… — Dan Bull");
+        let label = tray_now_playing_label(&playing(
+            Some("Song"),
+            Some("Kumar Sanu, Alka Yagnik, Udit Narayan, Kavita Krishnamurthy"),
+        ));
+        assert_eq!(label, "Song — Kumar Sanu, Alka Yagnik, Ud…");
+    }
+
+    #[test]
+    fn ampersands_stay_visible() {
+        assert_eq!(menu_label("Simon & Garfunkel"), "Simon && Garfunkel");
+        assert_eq!(
+            tray_now_playing_label(&playing(Some("Rock & Roll"), Some("Led Zeppelin"))),
+            "Rock && Roll — Led Zeppelin",
+        );
+    }
+
+    #[test]
+    fn long_titles_are_cut_on_characters() {
+        assert_eq!(truncate_chars("short", 10), "short");
+        assert_eq!(truncate_chars("abcdefghij", 10), "abcdefghij");
+        assert_eq!(truncate_chars("abcdefghijk", 10), "abcdefghi…");
+        // Never inside a multi-byte character.
+        assert_eq!(truncate_chars("ééééééééééé", 5), "éééé…");
+        assert_eq!(truncate_chars("ab   cdefgh", 6), "ab…");
+    }
+
+    #[test]
+    fn volume_is_whole_percent() {
+        assert_eq!(tray_volume_percent(0.75), 75);
+        assert_eq!(tray_volume_percent(0.754), 75);
+        assert_eq!(tray_volume_percent(1.7), 100);
+        assert_eq!(tray_volume_percent(-1.0), 0);
+        assert_eq!(tray_volume_percent(f64::NAN), 0);
+    }
+
+    #[test]
+    fn menu_items_map_to_player_actions() {
+        assert_eq!(tray_action("tray-play-pause").unwrap()["action"], "playPause");
+        assert_eq!(tray_action("tray-previous").unwrap()["action"], "previous");
+        assert_eq!(tray_action("tray-next").unwrap()["action"], "next");
+        assert_eq!(tray_action("tray-seek-back").unwrap()["action"], "seekBack");
+        assert_eq!(tray_action("tray-seek-forward").unwrap()["action"], "seekForward");
+        assert_eq!(tray_action("tray-mute").unwrap()["action"], "toggleMute");
+        let level = tray_action("tray-volume-50").unwrap();
+        assert_eq!(level["action"], "volume");
+        assert_eq!(level["volume"], 0.5);
+        // Items that are not playback controls, and levels the menu does not offer.
+        assert!(tray_action("tray-show").is_none());
+        assert!(tray_action("tray-now-playing").is_none());
+        assert!(tray_action("tray-volume-60").is_none());
+        assert!(tray_action("tray-volume-x").is_none());
     }
 }

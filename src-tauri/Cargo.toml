@@ -75,3 +75,5 @@ windows = { version = "0.61.3", features = [
 
 [target.'cfg(target_os = "linux")'.dependencies]
 souvlaki = "0.7"
+# Already built for souvlaki; used to ask the session bus whether a tray is shown.
+dbus = "0.9"

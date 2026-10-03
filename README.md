@@ -6,14 +6,15 @@ YTM Offline is not affiliated with YouTube or Google.
 
 ## Features
 
-- Home search; Library and Downloads pages; compact mini-player.
+- Home search; Library and Downloads pages.
 - Google sign-in and personal playlists through the existing YouTube Music client.
 - One-click playlist downloads, including Liked Songs, kept in sync at launch, on focus, and every five minutes while the app is open. The Downloads page also has **Sync now**.
 - Downloads survive restarts, sleep and lost connections: they wait for the internet and pick up where they stopped.
 - One copy of each downloaded track, even when several synced playlists contain it.
 - Offline audio, cover artwork, and available lyrics stored under the app's data directory.
 - Rust audio playback by default, with a YouTube player fallback when a stream is refused.
-- Lyrics, equalizer, Discord presence, Last.fm scrobbling, podcasts, media keys, and a mini-player.
+- Lyrics, equalizer, Discord presence, Last.fm scrobbling, podcasts and media keys.
+- Closing the window keeps the music playing in the tray; the tray icon's menu has the playback and volume controls, and Quit.
 - A solid dark theme with a configurable accent colour.
 
 ## Build on Linux

@@ -86,19 +86,6 @@ function subscribe(callback: () => void) {
   };
 }
 
-/*
- * The cache has to drop on a write from the other window too, or the mini player keeps
- * answering with the value it read at startup.
- *
- * Guarded because this runs at import and `player/AudioEngine.ts` imports this module — which
- * puts it one import away from the `*.check.ts` bundles, and those run in Node with no `window`.
- */
-if (typeof window !== "undefined") {
-  window.addEventListener("storage", () => {
-    cachedMode = null;
-  });
-}
-
 export function getAudioEngineMode(): AudioEngineMode {
   return readMode();
 }

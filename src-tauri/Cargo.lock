@@ -6488,6 +6488,7 @@ dependencies = [
  "aes-gcm",
  "base64 0.22.1",
  "block2",
+ "dbus",
  "discord-rich-presence",
  "futures-util",
  "keyring",

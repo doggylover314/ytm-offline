@@ -11,10 +11,8 @@ import {
   applyNativeWindowControls,
   hydrateWindowControlSettings,
 } from "./ui/settings/windowControls";
-import { hydrateMiniPlayerSettings } from "./ui/settings/miniPlayer";
 import { hydratePlayerControlSettings } from "./ui/settings/playerControls";
 import { hydrateQueuePanelSettings } from "./ui/settings/queuePanel";
-import { hydrateTraySettings } from "./ui/settings/tray";
 import { hydrateMediaSessionSettings } from "./ui/settings/mediaSession";
 import { hydrateAudioQualitySettings } from "./internal/audioQuality";
 import { hydrateAudioEngineMode } from "./ui/settings/audioEngine";
@@ -66,10 +64,8 @@ void Promise.all([
   hydrateAccentColor(),
   hydrateWindowControlSettings(),
   hydrateMediaSessionSettings(),
-  hydrateMiniPlayerSettings(),
   hydratePlayerControlSettings(),
   hydrateQueuePanelSettings(),
-  hydrateTraySettings(),
   hydrateAudioQualitySettings(),
   hydrateAudioEngineMode(),
   // Rust starts flat every launch, so the stored curve has to be pushed back down.
